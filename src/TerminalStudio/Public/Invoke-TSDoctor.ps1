@@ -23,6 +23,11 @@ function Invoke-TSDoctor {
         says something is wrong without saying what to do has only moved the
         problem into the user's head.
 
+        A check that cannot run reports Warn or Skip, never Fail. Those are
+        different claims: one says the machine is wrong, the other says the check
+        could not look. Conflating them spends the credibility of every other
+        result in the report.
+
     .PARAMETER DesiredStatePath
         Path to the desired-state document. Defaults to the copy in this repository.
 
@@ -130,11 +135,24 @@ function Invoke-TSDoctor {
         foreach ($resource in @($state.resources)) {
             switch ([string] $resource.kind) {
                 'font' {
-                    if (Test-TSFontInstalled -FamilyName $resource.family) {
-                        $results.Add((New-TSResult -Name "Font: $($resource.family)" -Status 'Pass' -Expected 'installed' -Actual 'installed'))
-                    }
-                    else {
-                        $results.Add((New-TSResult -Name "Font: $($resource.family)" -Status 'Fail' -Expected 'installed' -Actual 'not registered' -Remediation "Install the font, scope $(Get-TSFontScope). Glyphs in prompts and icons will render as boxes until then."))
+                    $font = Get-TSFontState -FamilyName $resource.family
+
+                    switch ([string] $font.State) {
+                        'Installed' {
+                            # Detail carries the name it was found under. When that differs
+                            # from the requested family - 'CaskaydiaCove NFM Regular' for
+                            # 'CaskaydiaCove Nerd Font Mono' - saying so is the difference
+                            # between a result and a claim.
+                            $results.Add((New-TSResult -Name "Font: $($resource.family)" -Status 'Pass' -Expected 'installed' -Actual $font.Detail))
+                        }
+
+                        'Missing' {
+                            $results.Add((New-TSResult -Name "Font: $($resource.family)" -Status 'Fail' -Expected 'installed' -Actual $font.Detail -Remediation "Install the font, scope $(Get-TSFontScope). Glyphs in prompts and icons will render as boxes until then."))
+                        }
+
+                        default {
+                            $results.Add((New-TSResult -Name "Font: $($resource.family)" -Status 'Warn' -Expected 'installed' -Actual $font.Detail -Remediation 'Neither font system could be enumerated, so this is unverified rather than broken. Check the font dropdown in Windows Terminal settings before installing anything.'))
+                        }
                     }
                 }
 
