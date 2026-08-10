@@ -106,6 +106,9 @@ cd terminal-studio
 ./ts.ps1 doctor
 ```
 
+Every command below assumes you are in that directory. `./tools/...` and `./ts.ps1` are relative
+paths, so they resolve against your current location and nothing else.
+
 To see the configuration surface — every knob, its current value, and whether the desired state
 actually binds it:
 
@@ -124,12 +127,18 @@ The bootstrap resolves today, but **no release exists yet**, so the download ste
 is published. Once it is:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.1.0 -Sha256 <published-hash>
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.1.0 -Sha256 PASTE_THE_PUBLISHED_HASH
 ```
 
-Note the shape. The familiar `irm ... | iex` form **cannot** run this script: piping into
-`Invoke-Expression` passes no arguments, and `-Version` is mandatory, so the shell would stop and
-prompt for it mid-line. Fetching the script on its own is a fine way to read it before trusting it:
+Replace `PASTE_THE_PUBLISHED_HASH` with the hash from the release notes. It is a bareword rather
+than the usual `<angle-bracket>` placeholder because `<` is a reserved operator in PowerShell: an
+angle-bracket placeholder does not fail with "you forgot the hash", it fails at parse time with a
+message about an operator you never typed.
+
+Note the shape of the command too. The familiar `irm ... | iex` form **cannot** run this script:
+piping into `Invoke-Expression` passes no arguments, and `-Version` is mandatory, so the shell would
+stop and prompt for it mid-line. Fetching the script on its own is a fine way to read it before
+trusting it:
 
 ```powershell
 irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1
@@ -140,15 +149,24 @@ published hash, or pass `-SkipHashCheck` and accept unverified content as a deli
 
 ## Cutting a release
 
+Build from a fresh clone. The script refuses a dirty working tree, because an archive containing
+uncommitted changes cannot be rebuilt from the tag that names it, and the hash would then be
+authoritative for bytes that exist nowhere in history.
+
 ```powershell
-./tools/New-TSRelease.ps1 -Version v0.1.0
+$build = Join-Path $env:TEMP 'ts-build'
+Remove-Item $build -Recurse -Force -ErrorAction SilentlyContinue
+git clone --depth 1 https://github.com/AbdallahxAhmed/terminal-studio $build
+& "$build/tools/New-TSRelease.ps1" -Version v0.1.0
 ```
 
-Builds `TerminalStudio-v0.1.0.zip` with `ts.ps1` at the archive root, writes the SHA-256 beside it,
-and prints the install line with the hash filled in. It refuses to build if the tag disagrees with
-`ModuleVersion` in the manifest, because an archive that misreports its own version is a defect
-nothing downstream would catch. Create the GitHub release for the same tag, attach the archive, and
-paste the printed line into the notes.
+This writes `TerminalStudio-v0.1.0.zip` with `ts.ps1` at the archive root, writes the SHA-256 beside
+it, and prints both the `gh release create` command and the finished install line with the hash
+already substituted. It also refuses if the tag disagrees with `ModuleVersion` in the manifest,
+because an archive that misreports its own version is a defect nothing downstream would catch.
+
+`-AllowDirty` overrides the clean-tree check, and produces a release that cannot be reproduced from
+its tag. Use it for throwaway builds, never for a published one.
 
 ## Running the tests
 
