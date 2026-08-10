@@ -49,7 +49,7 @@ Describe 'module surface' {
     }
 }
 
-Describe 'font name resolution' {
+Describe 'font name aliasing' {
 
     # 0.1.0 reported CaskaydiaCove Nerd Font Mono as missing on a machine where it
     # was installed and selected in Windows Terminal. Nothing here tested name
@@ -80,6 +80,82 @@ Describe 'font name resolution' {
                 Should -Be @('PxPlus IBM VGA8')
         }
     }
+}
+
+Describe 'registered font name matching' {
+
+    # Every name below was copied out of a real font registry, not invented. The
+    # machine in question had one family registered under three conventions at
+    # once, which no amount of reasoning about the documentation would have
+    # predicted.
+
+    BeforeAll {
+        $script:monoAliases = @('CaskaydiaCove Nerd Font Mono', 'CaskaydiaCove NFM')
+    }
+
+    It 'matches the spaced abbreviated form: <name>' -ForEach @(
+        @{ name = 'CaskaydiaCove NFM Regular (TrueType)' }
+        @{ name = 'CaskaydiaCove NFM Bold Italic (TrueType)' }
+        @{ name = 'CaskaydiaCove NFM SemiLight (TrueType)' }
+    ) {
+        InModuleScope 'TerminalStudio' -Parameters @{ name = $name; aliases = $script:monoAliases } {
+            Test-TSFontNameMatch -RegisteredName $name -Alias $aliases | Should -BeTrue
+        }
+    }
+
+    It 'matches the hyphenated PostScript form: <name>' -ForEach @(
+        @{ name = 'CaskaydiaCoveNerdFontMono-Regular (TrueType)' }
+        @{ name = 'CaskaydiaCoveNerdFontMono-SemiBoldItalic (TrueType)' }
+        @{ name = 'CaskaydiaCoveNerdFontMono-ExtraLight (TrueType)' }
+    ) {
+        # The form the previous fix missed. It only passed on the reporting machine
+        # because the abbreviated set happened to be installed alongside it.
+        InModuleScope 'TerminalStudio' -Parameters @{ name = $name; aliases = $script:monoAliases } {
+            Test-TSFontNameMatch -RegisteredName $name -Alias $aliases | Should -BeTrue
+        }
+    }
+
+    It 'refuses a sibling family that differs by one letter: <name>' -ForEach @(
+        @{ name = 'CaskaydiaCove NF Regular (TrueType)' }
+        @{ name = 'CaskaydiaCove NFP Regular (TrueType)' }
+        @{ name = 'CaskaydiaCove NFP SemiLight Italic (TrueType)' }
+    ) {
+        # NF, NFM and NFP are proportional, monospaced and semi-proportional cuts of
+        # the same typeface, and all three live in that registry together. Accepting
+        # the wrong one does not raise an error - it silently renders with the wrong
+        # advance width, which is a far more annoying bug to chase than a red check.
+        InModuleScope 'TerminalStudio' -Parameters @{ name = $name; aliases = $script:monoAliases } {
+            Test-TSFontNameMatch -RegisteredName $name -Alias $aliases | Should -BeFalse
+        }
+    }
+
+    It 'does not answer a request for the proportional face with the mono one' {
+        # The reverse direction of the same boundary rule.
+        InModuleScope 'TerminalStudio' {
+            Test-TSFontNameMatch -RegisteredName 'CaskaydiaCoveNerdFontMono-Regular (TrueType)' -Alias @('CaskaydiaCove Nerd Font', 'CaskaydiaCove NF') |
+                Should -BeFalse
+        }
+    }
+
+    It 'matches a plain family name with only the format suffix attached' {
+        InModuleScope 'TerminalStudio' {
+            Test-TSFontNameMatch -RegisteredName 'PxPlus IBM VGA8 (TrueType)' -Alias @('PxPlus IBM VGA8') |
+                Should -BeTrue
+        }
+    }
+
+    It 'treats a family name as data rather than as a wildcard pattern' {
+        # Square brackets in a family name would otherwise be read as a character
+        # class, and the font would report missing for reasons having nothing to do
+        # with whether it is installed.
+        InModuleScope 'TerminalStudio' {
+            Test-TSFontNameMatch -RegisteredName 'Weird [Test] Font Regular (TrueType)' -Alias @('Weird [Test] Font') |
+                Should -BeTrue
+        }
+    }
+}
+
+Describe 'Get-TSFontState' {
 
     It 'answers with one of three states and always explains itself' {
         # Shape only. Which fonts exist is a property of the runner, not of this
