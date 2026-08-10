@@ -1,0 +1,27 @@
+# Test output
+testresults.xml
+coverage.xml
+*.trx
+
+# Local diagnostic bundles and logs
+logs/
+*.jsonl
+*-diagnostics.zip
+
+# Local machine overrides
+desired-state/local.*.json
+*.local.json
+
+# Downloaded artifacts during bootstrap testing
+.artifacts/
+*.zip
+
+# Editor and OS noise
+.vs/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.user
+Thumbs.db
+desktop.ini
+.DS_Store
