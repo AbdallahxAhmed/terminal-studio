@@ -44,13 +44,12 @@ function Get-TSFontNameAlias {
         and which one you see depends entirely on which API you asked. Upstream lists
         CascadiaCode among the families affected by this.
 
-        This table is load-bearing rather than convenient. Measured on a real
-        machine, neither font enumeration nor the registry will report the verbose
-        name for an installed Nerd Font - both return the abbreviation. The verbose
-        name exists, Windows Terminal accepts it, and no interface reachable from
-        here admits to it. So a family whose abbreviation is missing from this table
-        cannot be found by any route, and adding a new abbreviation here is the fix
-        for an entire class of false failures.
+        This table is the fast path, not the only path. Family-level enumeration and
+        the registry both report the abbreviation and nothing else, so without these
+        aliases neither could answer a question phrased in verbose names. Typeface
+        inspection in Get-TSFontState can find the verbose name directly, which is
+        what keeps a family missing from this table findable rather than lost - but
+        it is slow, so this stays in front of it.
 
     .PARAMETER FamilyName
         The family name as written in desired state, for example
@@ -114,10 +113,20 @@ function Test-TSFontNameMatch {
             space boundary    - the family, then a style word
             hyphen boundary   - the family with spaces removed, then a style word
 
-        Each rule requires a boundary. That is the whole point, and the reason none
-        of them accepts 'CaskaydiaCove NFP Regular' when asked about NFM: prefix
-        matching without a boundary would quietly conflate three distinct families
-        that differ only in their last letter.
+        The space-boundary rule is not merely defensive. A Win32 font family holds at
+        most four styles - regular, bold, italic, bold italic - so a family with more
+        weights is split, and the extra weights become families in their own right.
+        Probing a glyph typeface for its Win32 family name returns exactly that:
+
+            Win32FamilyNames -> CaskaydiaCove NFM ExtraLight
+
+        Which is why the registry is full of style-suffixed entries, and why matching
+        the family alone would find only a quarter of the faces.
+
+        Each rule still requires a boundary. That is what stops any of them accepting
+        'CaskaydiaCove NFP Regular' when asked about NFM: prefix matching without one
+        would quietly conflate three distinct families that differ by a single
+        letter.
 
     .PARAMETER RegisteredName
         A name as it appears in the font registry, with or without the format suffix.
@@ -175,39 +184,51 @@ function Get-TSFontState {
         Reports whether a font family is installed, and says how it knows.
 
     .DESCRIPTION
-        Two oracles. Neither is authoritative, which took measuring to establish.
+        Three oracles, cheapest first. The ordering is the design, not an accident.
 
-        Font enumeration first, via PresentationCore over the machine and per-user
-        font directories. This reads names out of the font files themselves. It was
-        originally added under the belief that it exposed typographic family names -
-        the verbose ones Windows Terminal accepts - and that belief was wrong. Probed
-        against a machine with CascadiaCode installed, it returns 'CaskaydiaCove NF',
-        'CaskaydiaCove NFM' and 'CaskaydiaCove NFP' and nothing longer. WPF reports
-        name ID 1, which for Nerd Fonts is the abbreviated GDI-compatible name.
+        1. Family enumeration, via PresentationCore over the machine and per-user
+           font directories. Fast, but it reports name ID 1 only - the
+           GDI-compatible name, 'CaskaydiaCove NFM'. Measured rather than assumed:
+           an earlier version of this file claimed it returned the verbose
+           typographic name, and a probe on a real machine showed three families,
+           all abbreviated.
 
-        The font registry second. Same namespace, different failure modes, which is
-        the honest reason to keep both. Enumeration reads the font; the registry
-        stores whatever the installer decided to write. On the machine above those
-        differ sharply - 48 registry values resolving to 3 families, because one
-        installer named its entries after filenames rather than after the font.
-        Either source can be wrong or absent, and they are wrong in different ways.
+        2. The font registry. The same namespace, kept because it fails differently.
+           Enumeration reads names out of the font; the registry stores whatever the
+           installer chose to write. Those diverge in practice - one machine held 48
+           registry values resolving to 3 families, because an installer named its
+           entries after filenames.
 
-        Since both report abbreviations, matching depends entirely on
-        Get-TSFontNameAlias. Nothing here can discover the verbose name; it can only
-        be predicted from the family in desired state.
+           Both of the above can only match through Get-TSFontNameAlias, since
+           neither will ever say 'Nerd Font Mono'.
 
-        Returns three states rather than two. 'Unknown' exists because the previous
+        3. Typeface inspection. One level below the family, GlyphTypeface.FamilyNames
+           carries both names at once:
+
+               CaskaydiaCove NFM / CaskaydiaCove Nerd Font Mono
+
+           This is the only interface reachable from here that states the verbose
+           name, so it is the only one that can identify a font without being told
+           its abbreviation in advance. It also opens every font file it touches,
+           which is why it runs last and only when the cheap paths came up empty.
+
+           The trade is deliberate. The expensive answer is paid for precisely when
+           the alternative is reporting a failure, and a slow correct answer beats a
+           fast wrong one. This check has already shipped the fast wrong one.
+
+        Returns three states rather than two. 'Unknown' exists because the original
         boolean had no way to distinguish 'this font is absent' from 'I could not
         find out', and reported both as absent. A false failure is not a safe
-        default: it sends someone to fix something that is not broken, and spends
-        the credibility of every other check to do it.
+        default: it sends someone to fix something that is not broken, and spends the
+        credibility of every other check to do it.
 
     .PARAMETER FamilyName
         Family name to look for, for example 'CaskaydiaCove Nerd Font Mono'.
 
     .OUTPUTS
         A record with State ('Installed', 'Missing' or 'Unknown'), the MatchedName
-        actually found, the Method that found it, and a human-readable Detail.
+        actually found, the Method that found it, the places Searched, and a
+        human-readable Detail.
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -220,64 +241,77 @@ function Get-TSFontState {
     $aliases = @(Get-TSFontNameAlias -FamilyName $FamilyName)
 
     $matchedName = $null
-    $method = $null
-    $enumerationRan = $false
-    $registryRan = $false
+    $method = 'None'
+    $searched = [System.Collections.Generic.List[string]]::new()
     $reasons = [System.Collections.Generic.List[string]]::new()
 
-    # ------------------------------------------------------ font enumeration ---
+    $directories = @(
+        (Join-Path -Path $env:WINDIR -ChildPath 'Fonts')
+        (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Microsoft\Windows\Fonts')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+    $enumerationAvailable = $false
+
     try {
         Add-Type -AssemblyName 'PresentationCore' -ErrorAction Stop
+        $enumerationAvailable = $true
+    }
+    catch {
+        # Expected off Windows, and on Windows installations without the desktop
+        # runtime. Not a failure of the machine, so it must not read as one.
+        $reasons.Add("font enumeration unavailable ($($_.Exception.Message))")
+    }
 
-        $directories = @(
-            (Join-Path -Path $env:WINDIR -ChildPath 'Fonts')
-            (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Microsoft\Windows\Fonts')
-        )
+    if ($directories.Count -eq 0) {
+        $reasons.Add('no font directory was readable')
+    }
 
-        foreach ($directory in $directories) {
-            if (-not (Test-Path -LiteralPath $directory)) {
-                continue
-            }
+    # ------------------------------------------------ 1. family enumeration ---
+    if ($enumerationAvailable -and $directories.Count -gt 0) {
+        $searched.Add('font enumeration')
 
-            $enumerationRan = $true
+        try {
+            foreach ($directory in $directories) {
+                foreach ($family in [System.Windows.Media.Fonts]::GetFontFamilies($directory + '\')) {
+                    $candidates = [System.Collections.Generic.List[string]]::new()
 
-            foreach ($family in [System.Windows.Media.Fonts]::GetFontFamilies($directory + '\')) {
-                $candidates = [System.Collections.Generic.List[string]]::new()
-
-                foreach ($name in $family.FamilyNames.Values) {
-                    $candidates.Add([string] $name)
-                }
-
-                # Source is 'file:///C:/Windows/Fonts/#CaskaydiaCove NFM' when
-                # enumerated from a directory, so the family name is the fragment.
-                if ($family.Source) {
-                    $candidates.Add((([string] $family.Source) -split '#')[-1])
-                }
-
-                foreach ($candidate in $candidates) {
-                    if ($aliases -contains $candidate.Trim()) {
-                        $matchedName = $candidate.Trim()
-                        $method = 'Enumeration'
-                        break
+                    foreach ($name in $family.FamilyNames.Values) {
+                        $candidates.Add([string] $name)
                     }
+
+                    # Source is 'file:///C:/Windows/Fonts/#CaskaydiaCove NFM' when
+                    # enumerated from a directory, so the family name is the fragment.
+                    if ($family.Source) {
+                        $candidates.Add((([string] $family.Source) -split '#')[-1])
+                    }
+
+                    foreach ($candidate in $candidates) {
+                        if ($aliases -contains $candidate.Trim()) {
+                            $matchedName = $candidate.Trim()
+                            $method = 'Enumeration'
+                            break
+                        }
+                    }
+
+                    if ($matchedName) { break }
                 }
 
                 if ($matchedName) { break }
             }
-
-            if ($matchedName) { break }
+        }
+        catch {
+            $reasons.Add("font enumeration failed ($($_.Exception.Message))")
         }
     }
-    catch {
-        $reasons.Add("font enumeration unavailable ($($_.Exception.Message))")
-    }
 
-    # --------------------------------------------------------------- registry ---
+    # ------------------------------------------------------ 2. font registry ---
     if (-not $matchedName) {
         $keys = @(
             'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
             'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
         )
+
+        $registryRan = $false
 
         foreach ($key in $keys) {
             if (-not (Test-Path -LiteralPath $key)) {
@@ -300,22 +334,69 @@ function Get-TSFontState {
             if ($matchedName) { break }
         }
 
-        if (-not $registryRan) {
+        if ($registryRan) {
+            $searched.Add('the font registry')
+        }
+        else {
             $reasons.Add('no font registry key was readable')
+        }
+    }
+
+    # -------------------------------------------------- 3. typeface inspection ---
+    if (-not $matchedName -and $enumerationAvailable -and $directories.Count -gt 0) {
+        $searched.Add('typeface inspection')
+
+        try {
+            foreach ($directory in $directories) {
+                foreach ($family in [System.Windows.Media.Fonts]::GetFontFamilies($directory + '\')) {
+                    foreach ($typeface in $family.GetTypefaces()) {
+                        $glyphTypeface = $null
+
+                        # Fails for fonts that cannot be opened - damaged files, or
+                        # faces the current user cannot read. One unreadable font is
+                        # not an answer about a different font, so skip and continue.
+                        if (-not $typeface.TryGetGlyphTypeface([ref] $glyphTypeface)) {
+                            continue
+                        }
+
+                        foreach ($name in $glyphTypeface.FamilyNames.Values) {
+                            if ($aliases -contains ([string] $name).Trim()) {
+                                $matchedName = ([string] $name).Trim()
+                                $method = 'Typeface'
+                                break
+                            }
+                        }
+
+                        if ($matchedName) { break }
+                    }
+
+                    if ($matchedName) { break }
+                }
+
+                if ($matchedName) { break }
+            }
+        }
+        catch {
+            $reasons.Add("typeface inspection failed ($($_.Exception.Message))")
         }
     }
 
     # ------------------------------------------------------------- conclusion ---
     if ($matchedName) {
-        $label = if ($method -eq 'Enumeration') { 'font enumeration' } else { 'font registry' }
+        $label = switch ($method) {
+            'Enumeration' { 'font enumeration' }
+            'Registry' { 'the font registry' }
+            'Typeface' { 'typeface inspection' }
+            default { 'an unnamed source' }
+        }
 
         $detail = if ($matchedName -eq $FamilyName) {
             "installed, found by $label"
         }
         else {
-            # Worth surfacing rather than hiding. The name Windows holds is almost
-            # never the name in desired state, and someone checking this against the
-            # Fonts control panel needs to know which string to look for.
+            # Worth surfacing rather than hiding. The name Windows holds is often not
+            # the name in desired state, and someone checking this against the Fonts
+            # control panel needs to know which string to look for.
             "installed as '$matchedName', found by $label"
         }
 
@@ -325,21 +406,19 @@ function Get-TSFontState {
             State       = 'Installed'
             MatchedName = $matchedName
             Method      = $method
+            Searched    = $searched.ToArray()
             Detail      = $detail
         }
     }
 
-    if ($enumerationRan -or $registryRan) {
-        $searched = @()
-        if ($enumerationRan) { $searched += 'font enumeration' }
-        if ($registryRan) { $searched += 'the font registry' }
-
+    if ($searched.Count -gt 0) {
         return [pscustomobject] @{
             PSTypeName  = 'TerminalStudio.FontState'
             Family      = $FamilyName
             State       = 'Missing'
             MatchedName = $null
-            Method      = ($searched -join ' and ')
+            Method      = 'None'
+            Searched    = $searched.ToArray()
             Detail      = "not found by $($searched -join ' or '), under any of: $($aliases -join ', ')"
         }
     }
@@ -349,7 +428,8 @@ function Get-TSFontState {
         Family      = $FamilyName
         State       = 'Unknown'
         MatchedName = $null
-        Method      = 'none'
+        Method      = 'None'
+        Searched    = @()
         Detail      = "could not enumerate installed fonts: $($reasons -join '; ')"
     }
 }
