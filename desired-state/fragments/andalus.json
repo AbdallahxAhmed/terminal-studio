@@ -29,6 +29,7 @@
     {
       "updates": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
       "colorScheme": "Andalus",
+      "icon": "\u06de",
       "font": {
         "face": "CaskaydiaCove Nerd Font Mono",
         "size": 13,
@@ -40,7 +41,7 @@
       "backgroundImageOpacity": 0.85,
       "backgroundImageStretchMode": "uniformToFill",
       "backgroundImageAlignment": "right",
-      "padding": "18, 14, 18, 14",
+      "padding": "130, 14, 18, 14",
       "cursorShape": "bar",
       "antialiasingMode": "cleartype",
       "intenseTextStyle": "bright"
