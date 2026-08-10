@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://aka.ms/configuration-dsc-schema/0.2
+#
+# Passed verbatim to `winget configure -f desired-state/winget.dsc.yaml`.
+# This project never parses this file, which is the only reason YAML is acceptable
+# here: adding a YAML parser to a bootstrap that must run on a machine with nothing
+# installed would be a real dependency, whereas handing an opaque file to a tool
+# that already understands it costs nothing.
+#
+# Why delegate at all, when the predecessor wrote its own install loop with retry
+# logic, exit-code interpretation, and PATH refreshing? Because that loop was
+# several hundred lines reimplementing dependency ordering, idempotence, and
+# progress reporting that winget already has, tested far more broadly than one
+# person can manage. The version worth keeping is the list of package ids.
+
+properties:
+  configurationVersion: 0.2.0
+
+  assertions:
+    - resource: Microsoft.Windows.Developer/OsVersion
+      directives:
+        description: Require Windows 10 1809 or later
+        allowPrerelease: true
+      settings:
+        # 17763 is not a round number chosen for tidiness. It is the build that
+        # introduced per-user font installation, which is what lets this project
+        # install fonts without asking for administrator rights. Below it, the
+        # whole shape of the bootstrap changes.
+        MinVersion: '10.0.17763'
+
+  resources:
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: powershell
+      directives:
+        description: PowerShell 7, the engine everything else here assumes
+        allowPrerelease: true
+      settings:
+        id: Microsoft.PowerShell
+        source: winget
+
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: windowsTerminal
+      directives:
+        description: Windows Terminal Preview
+        allowPrerelease: true
+      settings:
+        id: Microsoft.WindowsTerminal.Preview
+        source: winget
+
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: ohMyPosh
+      directives:
+        description: Oh My Posh prompt engine
+        allowPrerelease: true
+      settings:
+        id: JanDeDobbeleer.OhMyPosh
+        source: winget
+
+    - resource: Microsoft.WinGet.DSC/WinGetPackage
+      id: git
+      directives:
+        description: Git, required by posh-git and by the prompt's repository segment
+        allowPrerelease: true
+      settings:
+        id: Git.Git
+        source: winget
