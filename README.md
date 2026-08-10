@@ -123,17 +123,17 @@ can leave `settings.json` in pieces is worse than no save at all. It exits 3 to 
 
 ## Installing from a release
 
-The bootstrap resolves today, but **no release exists yet**, so the download step will 404 until one
-is published. Once it is:
+Take the tag and hash from the
+[Releases page](https://github.com/AbdallahxAhmed/terminal-studio/releases) — every release publishes
+both, along with this line already filled in:
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.1.0 -Sha256 PASTE_THE_PUBLISHED_HASH
 ```
 
-Replace `PASTE_THE_PUBLISHED_HASH` with the hash from the release notes. It is a bareword rather
-than the usual `<angle-bracket>` placeholder because `<` is a reserved operator in PowerShell: an
-angle-bracket placeholder does not fail with "you forgot the hash", it fails at parse time with a
-message about an operator you never typed.
+`PASTE_THE_PUBLISHED_HASH` is a bareword rather than the usual `<angle-bracket>` placeholder because
+`<` is a reserved operator in PowerShell: an angle-bracket placeholder does not fail with "you forgot
+the hash", it fails at parse time with a message about an operator you never typed.
 
 Note the shape of the command too. The familiar `irm ... | iex` form **cannot** run this script:
 piping into `Invoke-Expression` passes no arguments, and `-Version` is mandatory, so the shell would
@@ -160,10 +160,24 @@ git clone --depth 1 https://github.com/AbdallahxAhmed/terminal-studio $build
 & "$build/tools/New-TSRelease.ps1" -Version v0.1.0
 ```
 
-This writes `TerminalStudio-v0.1.0.zip` with `ts.ps1` at the archive root, writes the SHA-256 beside
-it, and prints both the `gh release create` command and the finished install line with the hash
-already substituted. It also refuses if the tag disagrees with `ModuleVersion` in the manifest,
-because an archive that misreports its own version is a defect nothing downstream would catch.
+This writes the archive with `ts.ps1` at its root, the SHA-256 beside it, and a notes file, then
+prints a ready-to-paste `gh release create` command. That command carries two flags worth
+understanding rather than copying blindly:
+
+- `--repo`, because `gh` otherwise infers the repository from the git remote of your *current
+  directory*, and fails with `not a git repository` anywhere else — an error about git, from a
+  command about releases, naming neither.
+- `--target <commit>`, pinned to the commit the archive was built from. Without it `gh` tags whatever
+  the default branch points at when the command runs, which need not be that tree. The release would
+  then publish a hash certifying bytes its own tag does not reproduce.
+
+The script also refuses if the tag disagrees with `ModuleVersion` in the manifest, because an archive
+that misreports its own version is a defect nothing downstream would catch.
+
+**The archive is not byte-reproducible.** Zip stores file modification times, and `git clone` stamps
+those at checkout, so rebuilding from identical sources yields a different hash. Publish the archive
+you built; do not rebuild afterwards and expect the published hash to match. Normalising those
+timestamps is on the roadmap and is a prerequisite for meaningful build provenance.
 
 `-AllowDirty` overrides the clean-tree check, and produces a release that cannot be reproduced from
 its tag. Use it for throwaway builds, never for a published one.
@@ -196,13 +210,14 @@ budget out loud.
 - [x] `ts configure` — one control definition, two renderers, read-only
 - [x] Release builder and verified bootstrap
 - [ ] Green CI
+- [ ] Byte-reproducible archives (normalised timestamps)
 - [ ] `ts doctor` — read-only capability and drift detection
 - [ ] Desired-state schema and Windows Terminal fragment extraction
 - [ ] Adapter seam with mocked unit tests
 - [ ] `ts plan` — diff desired against observed
 - [ ] `ts apply` — converge, journaled, idempotent
 - [ ] Journal-driven uninstall (no hand-maintained mirror of the installer)
-- [ ] Signed, hash-pinned releases with build provenance attestation
+- [ ] Signed releases with build provenance attestation
 
 ## Decisions
 
