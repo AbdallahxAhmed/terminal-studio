@@ -26,9 +26,9 @@ Describe 'module surface' {
         Get-Module -Name 'TerminalStudio' | Should -Not -BeNullOrEmpty
     }
 
-    It 'exports exactly the two commands it claims' {
+    It 'exports exactly the commands it claims' {
         @(Get-Command -Module 'TerminalStudio' | ForEach-Object { $_.Name } | Sort-Object) |
-            Should -Be @('Get-TSPlan', 'Invoke-TSDoctor')
+            Should -Be @('Get-TSControl', 'Get-TSPlan', 'Invoke-TSDoctor')
     }
 
     It 'keeps renderers out of the public surface' {
@@ -46,6 +46,56 @@ Describe 'module surface' {
         # Absent and documented beats present and dishonest.
         Get-Command -Module 'TerminalStudio' -Name 'Invoke-TSApply' -ErrorAction SilentlyContinue |
             Should -BeNullOrEmpty
+    }
+}
+
+Describe 'font name resolution' {
+
+    # 0.1.0 reported CaskaydiaCove Nerd Font Mono as missing on a machine where it
+    # was installed and selected in Windows Terminal. Nothing here tested name
+    # matching, so the defect survived a rewrite of the function that contained it.
+
+    It 'offers the abbreviated Nerd Font alias for a verbose family name' {
+        InModuleScope 'TerminalStudio' {
+            $aliases = @(Get-TSFontNameAlias -FamilyName 'CaskaydiaCove Nerd Font Mono')
+
+            $aliases | Should -Contain 'CaskaydiaCove Nerd Font Mono'
+            $aliases | Should -Contain 'CaskaydiaCove NFM'
+        }
+    }
+
+    It 'abbreviates Mono before the proportional form' {
+        # The ordering trap. 'Nerd Font Mono' contains 'Nerd Font', so matching the
+        # shorter pattern first turns every Mono face into 'CaskaydiaCove NF Mono' -
+        # a name no font has ever been registered under.
+        InModuleScope 'TerminalStudio' {
+            @(Get-TSFontNameAlias -FamilyName 'JetBrainsMono Nerd Font Mono') |
+                Should -Contain 'JetBrainsMono NFM'
+        }
+    }
+
+    It 'leaves a family name with no Nerd Font marker alone' {
+        InModuleScope 'TerminalStudio' {
+            @(Get-TSFontNameAlias -FamilyName 'PxPlus IBM VGA8') |
+                Should -Be @('PxPlus IBM VGA8')
+        }
+    }
+
+    It 'answers with one of three states and always explains itself' {
+        # Shape only. Which fonts exist is a property of the runner, not of this
+        # code, and asserting a particular answer would only re-encode the runner.
+        InModuleScope 'TerminalStudio' {
+            $state = Get-TSFontState -FamilyName 'CaskaydiaCove Nerd Font Mono'
+
+            $state.State | Should -BeIn @('Installed', 'Missing', 'Unknown')
+            $state.Detail | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'does not throw for a font nobody has' {
+        InModuleScope 'TerminalStudio' {
+            { Get-TSFontState -FamilyName 'Definitely Not A Real Font 9000' } | Should -Not -Throw
+        }
     }
 }
 
@@ -80,6 +130,16 @@ Describe 'Invoke-TSDoctor' {
         foreach ($result in ($script:results | Where-Object { $_.Status -eq 'Fail' })) {
             $result.Remediation |
                 Should -Not -BeNullOrEmpty -Because "the check '$($result.Name)' reports a failure and must say what to do about it"
+        }
+    }
+
+    It 'says what it could not verify, rather than calling it broken' {
+        # Warn and Skip both mean "unverified". Fail means "wrong". A check that
+        # cannot look must not claim the second, which is precisely the mistake the
+        # font check made in 0.1.0.
+        foreach ($result in ($script:results | Where-Object { $_.Status -in @('Warn', 'Skip') })) {
+            $result.Actual |
+                Should -Not -BeNullOrEmpty -Because "the check '$($result.Name)' is unverified and must say what it saw"
         }
     }
 
