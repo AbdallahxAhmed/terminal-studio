@@ -10,35 +10,53 @@
       "newline": true,
       "segments": [
         {
-          "type": "text",
-          "style": "plain",
-          "foreground": "#D4A537",
-          "template": "\u06de"
+          "type": "os",
+          "style": "diamond",
+          "leading_diamond": "\ue0b6",
+          "trailing_diamond": "\ue0b4",
+          "background": "#2D5D8F",
+          "foreground": "#FBF3E2",
+          "properties": {
+            "windows": "\ue70f"
+          },
+          "template": " {{ .Icon }} "
+        },
+        {
+          "type": "session",
+          "style": "diamond",
+          "leading_diamond": "\ue0b6",
+          "trailing_diamond": "\ue0b4",
+          "background": "#16233C",
+          "foreground": "#EDE0C8",
+          "template": " \uf007 {{ .UserName }}<#5B8FCC>@{{ .HostName }}</> "
         },
         {
           "type": "path",
-          "style": "plain",
-          "foreground": "#F0C75E",
+          "style": "diamond",
+          "leading_diamond": "\ue0b6",
+          "trailing_diamond": "\ue0b4",
+          "background": "#16233C",
+          "foreground": "#EDE0C8",
           "properties": {
-            "style": "agnoster_short",
-            "max_depth": 3,
-            "folder_separator_icon": " / "
+            "style": "full"
           },
-          "template": "\ufd3e {{ .Path }} \ufd3f"
+          "template": " <#D4A537>\uf07b</> {{ .Path }} "
         },
         {
           "type": "git",
-          "style": "plain",
-          "foreground": "#49C5B6",
+          "style": "diamond",
+          "leading_diamond": "\ue0b6",
+          "trailing_diamond": "\ue0b4",
+          "background": "#16233C",
+          "foreground": "#F0C75E",
           "foreground_templates": [
-            "{{ if or (.Working.Changed) (.Staging.Changed) }}#F0C75E{{ end }}",
             "{{ if gt .Behind 0 }}#E06A5E{{ end }}"
           ],
           "properties": {
             "fetch_status": true,
             "branch_icon": ""
           },
-          "template": "\ufd3e {{ .HEAD }}{{ if .Working.Changed }} *{{ .Working.String }}{{ end }}{{ if .Staging.Changed }} +{{ .Staging.String }}{{ end }} \ufd3f"
+          "template": " <#E0A03C>\ue725</> {{ .HEAD }}{{ if or (.Working.Changed) (.Staging.Changed) }} <#D4A537>\uf111</>{{ end }} "
         }
       ]
     },
@@ -54,16 +72,25 @@
             "threshold": 500,
             "style": "austin"
           },
-          "template": "{{ .FormattedMs }}"
+          "template": "{{ .FormattedMs }} "
         },
         {
           "type": "time",
-          "style": "plain",
+          "style": "diamond",
+          "leading_diamond": "\ue0b6",
+          "trailing_diamond": "\ue0b4",
+          "background": "#16233C",
           "foreground": "#8A93A8",
           "properties": {
-            "time_format": "15:04"
+            "time_format": "3:04 PM"
           },
-          "template": "\ufd3e {{ .CurrentDate | date .Format }} \ufd3f"
+          "template": " \uf017 {{ .CurrentDate | date .Format }} "
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#D4A537",
+          "template": " \u06de"
         }
       ]
     },
