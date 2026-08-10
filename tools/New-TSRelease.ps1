@@ -10,7 +10,8 @@
         TerminalStudio-<Version>.zip
 
     with ts.ps1 at the archive root, plus the hash and a notes file beside it.
-    Prints the gh command that publishes all of it.
+    Prints the gh command that publishes all of it, with the repository named
+    and the tag pinned to the commit the archive was built from.
 
     Run it from a clean checkout. It will refuse otherwise, because an archive
     built from uncommitted changes cannot be rebuilt from the tag that names it.
@@ -48,24 +49,31 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$slug = 'AbdallahxAhmed/terminal-studio'
 $repoRoot = Split-Path -Path $PSScriptRoot -Parent
 
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path -Path $repoRoot -ChildPath 'artifacts'
 }
 
-# A tag is a claim that the artifact can be rebuilt from it. Uncommitted
-# changes make that claim false, and nothing downstream would ever notice.
 $git = Get-Command -Name 'git' -CommandType Application -ErrorAction SilentlyContinue
+$commit = $null
+$isCheckout = $false
+$dirty = $null
 
-if ($git -and -not $AllowDirty) {
-    $status = $null
-    $isCheckout = $false
-
+if ($git) {
     Push-Location -LiteralPath $repoRoot
     try {
-        $status = & $git.Path 'status' '--porcelain' 2>$null
+        $dirty = & $git.Path 'status' '--porcelain' 2>$null
         $isCheckout = ($LASTEXITCODE -eq 0)
+
+        if ($isCheckout) {
+            $revision = & $git.Path 'rev-parse' 'HEAD' 2>$null
+
+            if ($LASTEXITCODE -eq 0 -and $revision) {
+                $commit = ([string](@($revision)[0])).Trim()
+            }
+        }
     }
     catch {
         $isCheckout = $false
@@ -73,10 +81,12 @@ if ($git -and -not $AllowDirty) {
     finally {
         Pop-Location
     }
+}
 
-    if ($isCheckout -and $status) {
-        throw "Working tree at $repoRoot has uncommitted changes, so this archive could not be rebuilt from tag $Version. Commit first, build from a fresh clone, or pass -AllowDirty to accept an unreproducible release."
-    }
+# A tag is a claim that the artifact can be rebuilt from it. Uncommitted
+# changes make that claim false, and nothing downstream would ever notice.
+if ($isCheckout -and $dirty -and -not $AllowDirty) {
+    throw "Working tree at $repoRoot has uncommitted changes, so this archive could not be rebuilt from tag $Version. Commit first, build from a fresh clone, or pass -AllowDirty to accept an unreproducible release."
 }
 
 # What ships. Everything else is scaffolding for producing it.
@@ -153,7 +163,7 @@ Set-Content -LiteralPath $hashPath -Value "$hash  $asset" -Encoding ASCII
 
 $sizeKb = [math]::Round((Get-Item -LiteralPath $archive).Length / 1KB)
 
-$raw = 'https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1'
+$raw = "https://raw.githubusercontent.com/$slug/main/bootstrap/get.ps1"
 $install = "& ([scriptblock]::Create((irm $raw))) -Version $Version -Sha256 $hash"
 
 # Notes go in a file rather than into --notes on the command line. Fenced
@@ -194,6 +204,19 @@ are. Passing -Sha256 is what makes this an install of a reviewed artifact rather
 than an install of whatever the host returned.
 "@
 
+if ($commit) {
+    $notes += @"
+
+
+## Provenance
+
+Built from commit $commit, which is what this tag points at. Rebuild it with
+tools/New-TSRelease.ps1 from that commit. Note that zip archives record file
+modification times, so a rebuild produces a different hash than the one above
+even from identical sources.
+"@
+}
+
 $notesPath = Join-Path -Path $OutputDirectory -ChildPath "TerminalStudio-$Version.notes.md"
 
 # Not Set-Content -Encoding UTF8: that means no BOM on 7 and a BOM on 5.1, and a
@@ -201,15 +224,36 @@ $notesPath = Join-Path -Path $OutputDirectory -ChildPath "TerminalStudio-$Versio
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($notesPath, $notes, $utf8NoBom)
 
+# --repo because gh otherwise infers the repository from the current directory's
+# git remote, and every other path here is absolute, so the command reads as if
+# location does not matter. --target because gh otherwise tags whatever the
+# default branch happens to point at when it runs, which need not be the tree
+# this archive was built from.
+$command = "gh release create $Version `"$archive`" --repo $slug"
+
+if ($commit) {
+    $command += " --target $commit"
+}
+
+$command += " --title $Version --notes-file `"$notesPath`""
+
 Write-Host ''
 Write-Host "  archive  $archive  ($sizeKb KB)"
 Write-Host "  sha256   $hash"
 Write-Host "  hashfile $hashPath"
 Write-Host "  notes    $notesPath"
+
+if ($commit) {
+    Write-Host "  commit   $commit"
+}
+else {
+    Write-Warning 'Could not resolve the commit, so the tag will point at whatever the default branch holds when you publish. Verify that is the tree this archive was built from.'
+}
+
 Write-Host ''
-Write-Host '  Publish it:'
+Write-Host '  Publish it, from any directory:'
 Write-Host ''
-Write-Host "    gh release create $Version `"$archive`" --title $Version --notes-file `"$notesPath`""
+Write-Host "    $command"
 Write-Host ''
 Write-Host '  Then this is the install line, hash already filled in:'
 Write-Host ''
