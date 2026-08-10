@@ -7,6 +7,10 @@ problem. That distinction drives every decision in this repository.
 
 > **Status: pre-alpha.** `doctor` is being built first, on purpose. `apply` does not exist yet and
 > is not stubbed out to pretend otherwise. See [Roadmap](#roadmap).
+>
+> **CI is currently red.** The workflow fails at startup: `matrix` is referenced from
+> `jobs.<id>.steps[*].shell`, which is not one of the contexts available there. The fix is to move
+> it to `jobs.<id>.defaults.run.shell`, where `matrix` *is* available.
 
 ---
 
@@ -17,13 +21,14 @@ the other. It works exactly once, on one machine, in one direction. You cannot a
 *would* do, you cannot ask whether the machine already matches, and you cannot undo it except by
 hand-maintaining a mirror-image uninstaller that inevitably drifts.
 
-Terminal Studio inverts that. The repository holds **desired state as data**. The engine has three
+Terminal Studio inverts that. The repository holds **desired state as data**. The engine has these
 verbs:
 
 | Command | Side effects | Question it answers |
 | --- | --- | --- |
 | `ts doctor` | none | Is this machine capable and healthy? What is drifting? |
 | `ts plan` | none | What exactly would change, and from what to what? |
+| `ts configure` | none yet | What can I turn on or off, and what is currently set? |
 | `ts apply` | yes | Make the machine match the desired state. |
 
 Three properties fall out of this for free, none of which an imperative installer can offer:
@@ -62,13 +67,18 @@ desired-state/          the product: what the machine should look like, as data
   machine.json            resources this tool owns
   winget.dsc.yaml         packages, handed verbatim to winget configure
   fragments/              Windows Terminal fragment extensions
+  omp/                    Oh My Posh prompt themes
+  profile/                the managed PowerShell profile
+  assets/                 backdrops and other binary content
 bootstrap/
   get.ps1                 stage 0. 5.1-safe. Short enough to read before running.
 src/TerminalStudio/
   Public/                 the API. Returns objects. Never prints.
   Private/                internal helpers. No OS contact.
   Adapters/               the ONLY code permitted to touch the OS. The mocking seam.
+  Data/                   inert declarations. controls.json defines every knob.
   UI/                     the ONLY code permitted to call Write-Host.
+tools/                  not shipped. Release building and other chores.
 tests/
   compat/                 runs on BOTH 5.1 and 7. Catches cross-edition defects.
   unit/                   runs on 7. Adapters mocked.
@@ -88,7 +98,7 @@ An architecture rule that is not enforced by a test is a comment.
 
 ## Quick start
 
-Nothing to install yet. Once the module lands:
+Clone and run. `doctor` is read-only and will not change anything on your machine.
 
 ```powershell
 git clone https://github.com/AbdallahxAhmed/terminal-studio
@@ -96,7 +106,49 @@ cd terminal-studio
 ./ts.ps1 doctor
 ```
 
-`doctor` is read-only. It will not change anything on your machine.
+To see the configuration surface — every knob, its current value, and whether the desired state
+actually binds it:
+
+```powershell
+pwsh -File ./ts.ps1 configure -ReadOnly     # terminal form, draws without reading input
+pwsh -STA -File ./ts.ps1 configure -Surface Wpf
+pwsh -File ./ts.ps1 configure -Json         # the model itself
+```
+
+`configure` has no save path yet, by design: there is no write adapter, and a half-built save that
+can leave `settings.json` in pieces is worse than no save at all. It exits 3 to say so.
+
+## Installing from a release
+
+The bootstrap resolves today, but **no release exists yet**, so the download step will 404 until one
+is published. Once it is:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.1.0 -Sha256 <published-hash>
+```
+
+Note the shape. The familiar `irm ... | iex` form **cannot** run this script: piping into
+`Invoke-Expression` passes no arguments, and `-Version` is mandatory, so the shell would stop and
+prompt for it mid-line. Fetching the script on its own is a fine way to read it before trusting it:
+
+```powershell
+irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1
+```
+
+`-Sha256` is not optional either. TLS proves who served the bytes, not what the bytes are. Pass the
+published hash, or pass `-SkipHashCheck` and accept unverified content as a deliberate choice.
+
+## Cutting a release
+
+```powershell
+./tools/New-TSRelease.ps1 -Version v0.1.0
+```
+
+Builds `TerminalStudio-v0.1.0.zip` with `ts.ps1` at the archive root, writes the SHA-256 beside it,
+and prints the install line with the hash filled in. It refuses to build if the tag disagrees with
+`ModuleVersion` in the manifest, because an archive that misreports its own version is a defect
+nothing downstream would catch. Create the GitHub release for the same tag, attach the archive, and
+paste the printed line into the notes.
 
 ## Running the tests
 
@@ -105,8 +157,8 @@ cd terminal-studio
 ```
 
 The runner selects its suite by engine: compatibility tests run under both Windows PowerShell 5.1
-and PowerShell 7, unit tests run under 7 only. CI runs both legs on every push. This matrix is the
-entire reason cross-edition defects get caught before a human sees them.
+and PowerShell 7, unit tests run under 7 only. The CI matrix runs both legs on every push — see the
+status note at the top; it is not passing yet.
 
 ## Definition of success
 
@@ -123,6 +175,9 @@ budget out loud.
 ## Roadmap
 
 - [x] Charter, ADRs, lint configuration, CI matrix
+- [x] `ts configure` — one control definition, two renderers, read-only
+- [x] Release builder and verified bootstrap
+- [ ] Green CI
 - [ ] `ts doctor` — read-only capability and drift detection
 - [ ] Desired-state schema and Windows Terminal fragment extraction
 - [ ] Adapter seam with mocked unit tests
@@ -136,6 +191,7 @@ budget out loud.
 - [ADR-0001 — Technology: PowerShell 7 module](docs/adr/0001-technology-powershell-module.md)
 - [ADR-0002 — Interface: CLI first, TUI as a view, no GUI](docs/adr/0002-interface-cli-first.md)
 - [ADR-0003 — Distribution: GitHub with a verified bootstrap](docs/adr/0003-distribution-github-verified-bootstrap.md)
+- [ADR-0004 — Two surfaces, one definition](docs/adr/0004-two-surfaces-one-definition.md)
 - [Architecture overview](docs/architecture.md)
 
 ## License
