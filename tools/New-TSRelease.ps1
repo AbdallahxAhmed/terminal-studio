@@ -26,8 +26,8 @@
     Overwrite an existing archive for this version.
 
 .PARAMETER AllowDirty
-    Build even though the working tree has uncommitted changes. The resulting
-    artifact will not be reproducible from its tag.
+    Build even though the working tree has uncommitted changes, or though it
+    could not be determined. The artifact may not be reproducible from its tag.
 
 .EXAMPLE
     ./tools/New-TSRelease.ps1 -Version v0.1.0
@@ -49,6 +49,93 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+<#
+    Reads HEAD out of .git rather than shelling out.
+
+    The git process was the unreliable part: exit codes, stderr redirection,
+    PATH resolution and $PSNativeCommandUseErrorActionPreference all sit between
+    the question and the answer, and any of them can turn a working repository
+    into a silent null. The files are plain text and are the same on every
+    platform and every git version.
+#>
+function Get-TSHeadCommit {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Root
+    )
+
+    $gitDir = Join-Path -Path $Root -ChildPath '.git'
+
+    if (-not (Test-Path -LiteralPath $gitDir)) {
+        return $null
+    }
+
+    # Worktrees and submodules use a .git file that points at the real directory.
+    if (Test-Path -LiteralPath $gitDir -PathType Leaf) {
+        $pointer = Get-Content -LiteralPath $gitDir -TotalCount 1
+
+        if (-not $pointer -or ([string]$pointer) -notmatch '^gitdir:\s*(.+)$') {
+            return $null
+        }
+
+        $gitDir = $Matches[1].Trim()
+
+        if (-not [System.IO.Path]::IsPathRooted($gitDir)) {
+            $gitDir = Join-Path -Path $Root -ChildPath $gitDir
+        }
+    }
+
+    $headPath = Join-Path -Path $gitDir -ChildPath 'HEAD'
+
+    if (-not (Test-Path -LiteralPath $headPath)) {
+        return $null
+    }
+
+    $head = Get-Content -LiteralPath $headPath -TotalCount 1
+
+    if (-not $head) {
+        return $null
+    }
+
+    $head = ([string]$head).Trim()
+
+    # Detached HEAD stores the commit directly.
+    if ($head -match '^[0-9a-fA-F]{40}$') {
+        return $head.ToLowerInvariant()
+    }
+
+    if ($head -notmatch '^ref:\s*(.+)$') {
+        return $null
+    }
+
+    $ref = $Matches[1].Trim()
+    $loose = Join-Path -Path $gitDir -ChildPath $ref
+
+    if (Test-Path -LiteralPath $loose) {
+        $value = Get-Content -LiteralPath $loose -TotalCount 1
+
+        if ($value) {
+            return ([string]$value).Trim().ToLowerInvariant()
+        }
+    }
+
+    # A freshly cloned repository keeps its refs packed until something writes one.
+    $packed = Join-Path -Path $gitDir -ChildPath 'packed-refs'
+
+    if (Test-Path -LiteralPath $packed) {
+        $pattern = '^([0-9a-fA-F]{40})\s+' + [regex]::Escape($ref) + '$'
+
+        foreach ($line in (Get-Content -LiteralPath $packed)) {
+            if ($line -match $pattern) {
+                return $Matches[1].ToLowerInvariant()
+            }
+        }
+    }
+
+    return $null
+}
+
 $slug = 'AbdallahxAhmed/terminal-studio'
 $repoRoot = Split-Path -Path $PSScriptRoot -Parent
 
@@ -56,27 +143,35 @@ if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path -Path $repoRoot -ChildPath 'artifacts'
 }
 
-$git = Get-Command -Name 'git' -CommandType Application -ErrorAction SilentlyContinue
-$commit = $null
-$isCheckout = $false
-$dirty = $null
+$commit = Get-TSHeadCommit -Root $repoRoot
 
-if ($git) {
+# Three states, not two. Conflating "clean" with "could not tell" is how the
+# previous version of this guard came to be permanently skipped without saying so.
+$treeState = 'unknown'
+$probeError = 'no probe ran'
+
+# Select-Object -First 1 because two git.exe on PATH makes .Path an array, and
+# invoking an array throws - which is a confusing way to learn about your PATH.
+$git = Get-Command -Name 'git' -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+if (-not $git) {
+    $probeError = 'git was not found on PATH'
+}
+else {
     Push-Location -LiteralPath $repoRoot
     try {
-        $dirty = & $git.Path 'status' '--porcelain' 2>$null
-        $isCheckout = ($LASTEXITCODE -eq 0)
+        $dirty = & $git.Path 'status' '--porcelain'
 
-        if ($isCheckout) {
-            $revision = & $git.Path 'rev-parse' 'HEAD' 2>$null
-
-            if ($LASTEXITCODE -eq 0 -and $revision) {
-                $commit = ([string](@($revision)[0])).Trim()
-            }
+        if ($LASTEXITCODE -eq 0) {
+            $treeState = if ($dirty) { 'dirty' } else { 'clean' }
+        }
+        else {
+            $probeError = "git status exited with $LASTEXITCODE"
         }
     }
     catch {
-        $isCheckout = $false
+        $probeError = $_.Exception.Message
     }
     finally {
         Pop-Location
@@ -85,8 +180,12 @@ if ($git) {
 
 # A tag is a claim that the artifact can be rebuilt from it. Uncommitted
 # changes make that claim false, and nothing downstream would ever notice.
-if ($isCheckout -and $dirty -and -not $AllowDirty) {
+if ($treeState -eq 'dirty' -and -not $AllowDirty) {
     throw "Working tree at $repoRoot has uncommitted changes, so this archive could not be rebuilt from tag $Version. Commit first, build from a fresh clone, or pass -AllowDirty to accept an unreproducible release."
+}
+
+if ($treeState -eq 'unknown') {
+    Write-Warning "Could not determine whether the working tree is clean ($probeError). The clean-tree check did not run, so this archive may contain changes that exist nowhere in history."
 }
 
 # What ships. Everything else is scaffolding for producing it.
@@ -242,12 +341,13 @@ Write-Host "  archive  $archive  ($sizeKb KB)"
 Write-Host "  sha256   $hash"
 Write-Host "  hashfile $hashPath"
 Write-Host "  notes    $notesPath"
+Write-Host "  tree     $treeState"
 
 if ($commit) {
     Write-Host "  commit   $commit"
 }
 else {
-    Write-Warning 'Could not resolve the commit, so the tag will point at whatever the default branch holds when you publish. Verify that is the tree this archive was built from.'
+    Write-Warning "Could not read HEAD from $repoRoot/.git, so the tag will point at whatever the default branch holds when you publish. Verify that is the tree this archive was built from."
 }
 
 Write-Host ''
