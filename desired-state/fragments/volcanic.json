@@ -1,0 +1,41 @@
+{
+  "$schema": "https://aka.ms/terminal-profiles-schema",
+  "schemes": [
+    {
+      "name": "Volcanic Heat",
+      "background": "#1A090D",
+      "foreground": "#FAD8D6",
+      "cursorColor": "#FF7A5C",
+      "selectionBackground": "#5A3A3A",
+      "black": "#1A090D",
+      "red": "#FF4E32",
+      "green": "#C7D96D",
+      "yellow": "#FFB627",
+      "blue": "#6E8CA0",
+      "purple": "#D96BA0",
+      "cyan": "#8FBFB0",
+      "white": "#FAD8D6",
+      "brightBlack": "#5A3A3A",
+      "brightRed": "#FF7A5C",
+      "brightGreen": "#DDEE8E",
+      "brightYellow": "#FFD166",
+      "brightBlue": "#93AFC2",
+      "brightPurple": "#F09AC4",
+      "brightCyan": "#B3DDD0",
+      "brightWhite": "#FFF3F1"
+    }
+  ],
+  "profiles": [
+    {
+      "updates": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+      "colorScheme": "Volcanic Heat",
+      "font": {
+        "face": "CaskaydiaCove Nerd Font Mono",
+        "size": 13,
+        "weight": "semi-bold"
+      },
+      "opacity": 75,
+      "useAcrylic": true
+    }
+  ]
+}
