@@ -1,0 +1,45 @@
+{
+  "$schema": "https://aka.ms/terminal-profiles-schema",
+  "schemes": [
+    {
+      "name": "Andalus",
+      "background": "#0B1220",
+      "foreground": "#EDE0C8",
+      "cursorColor": "#D4A537",
+      "selectionBackground": "#2D5D8F",
+      "black": "#0B1220",
+      "red": "#C0453C",
+      "green": "#5F9E6E",
+      "yellow": "#D4A537",
+      "blue": "#2D5D8F",
+      "purple": "#7B4B8A",
+      "cyan": "#2E9E93",
+      "white": "#EDE0C8",
+      "brightBlack": "#3A4358",
+      "brightRed": "#E06A5E",
+      "brightGreen": "#8FBF7A",
+      "brightYellow": "#F0C75E",
+      "brightBlue": "#5B8FCC",
+      "brightPurple": "#B58AC4",
+      "brightCyan": "#49C5B6",
+      "brightWhite": "#FBF3E2"
+    }
+  ],
+  "profiles": [
+    {
+      "updates": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+      "colorScheme": "Andalus",
+      "font": {
+        "face": "CaskaydiaCove Nerd Font Mono",
+        "size": 13,
+        "weight": "normal"
+      },
+      "opacity": 72,
+      "useAcrylic": true,
+      "padding": "18, 14, 18, 14",
+      "cursorShape": "bar",
+      "antialiasingMode": "cleartype",
+      "intenseTextStyle": "bright"
+    }
+  ]
+}
