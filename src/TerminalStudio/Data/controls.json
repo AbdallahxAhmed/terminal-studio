@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "description": "Editable surface of the desired-state documents. Rendered by both the TUI and the WPF window; neither surface hardcodes a control.",
+
+  "notes": [
+    "A control targets desired state, never the machine. Toggling a box changes what this environment should be, and plan/apply remain the only things that touch Windows. That is what keeps the UI from becoming a second, competing source of truth.",
+    "source 'fragment' and source 'omp' are resolved indirectly: the control names a path inside whichever file the matching resource in machine.json points at. Switching colour schemes therefore repoints every appearance control automatically, instead of leaving them bound to a file that is no longer in use.",
+    "costMs values are measured startup costs from the predecessor's own profile, not estimates. They are shown next to each module so the startup budget is visible at the moment the choice is made rather than discovered afterwards in a doctor warning."
+  ],
+
+  "groups": [
+    {
+      "id": "appearance",
+      "label": "Appearance",
+      "controls": [
+        {
+          "id": "scheme",
+          "label": "Colour scheme",
+          "type": "dropdown",
+          "target": { "source": "machine", "kind": "terminal.fragment", "property": "name" },
+          "options": [
+            { "value": "andalus", "label": "Andalus - manuscript illumination, frosted" },
+            { "value": "volcanic", "label": "Volcanic Heat - the previous scheme" }
+          ],
+          "help": "Chooses which file under desired-state/fragments is written to Windows Terminal."
+        },
+        {
+          "id": "acrylic",
+          "label": "Frosted glass (acrylic)",
+          "type": "checkbox",
+          "target": { "source": "fragment", "path": "profiles.0.useAcrylic", "mode": "value" },
+          "help": "Blurs the desktop behind the window. Windows silently ignores this when Transparency effects are off in Settings, and suppresses it under Battery Saver, so doctor reports the effective state rather than this requested one."
+        },
+        {
+          "id": "opacity",
+          "label": "Window opacity",
+          "type": "dropdown",
+          "target": { "source": "fragment", "path": "profiles.0.opacity", "mode": "value" },
+          "options": [
+            { "value": 100, "label": "100 - opaque" },
+            { "value": 85, "label": "85 - barely tinted" },
+            { "value": 72, "label": "72 - recommended with acrylic" },
+            { "value": 60, "label": "60 - heavy blur" },
+            { "value": 45, "label": "45 - looks best, reads worst" }
+          ],
+          "help": "Lower values look better and read worse. Below roughly 60 the parchment foreground stops being comfortable for long sessions."
+        },
+        {
+          "id": "font",
+          "label": "Font face",
+          "type": "dropdown",
+          "target": { "source": "fragment", "path": "profiles.0.font.face", "mode": "value" },
+          "options": [
+            { "value": "CaskaydiaCove Nerd Font Mono", "label": "CaskaydiaCove Nerd Font Mono - icons, no Arabic" },
+            { "value": "Cascadia Mono", "label": "Cascadia Mono - ships with Windows" },
+            { "value": "Kawkab Mono", "label": "Kawkab Mono - Arabic monospace, beta, no icons" }
+          ],
+          "help": "No font offers both Nerd Font icons and full Arabic coverage. The Andalus prompt needs neither: its ornaments come from Arabic Presentation Forms, which Windows already covers through font fallback."
+        },
+        {
+          "id": "fontSize",
+          "label": "Font size",
+          "type": "dropdown",
+          "target": { "source": "fragment", "path": "profiles.0.font.size", "mode": "value" },
+          "options": [
+            { "value": 11, "label": "11" },
+            { "value": 12, "label": "12" },
+            { "value": 13, "label": "13" },
+            { "value": 14, "label": "14" },
+            { "value": 16, "label": "16" }
+          ],
+          "help": "Ornaments are drawn from a fallback font and are slightly larger than the Latin cell. Sizes below 12 make that mismatch visible."
+        },
+        {
+          "id": "cursor",
+          "label": "Cursor shape",
+          "type": "dropdown",
+          "target": { "source": "fragment", "path": "profiles.0.cursorShape", "mode": "value" },
+          "options": [
+            { "value": "bar", "label": "bar" },
+            { "value": "filledBox", "label": "filledBox" },
+            { "value": "underscore", "label": "underscore" },
+            { "value": "vintage", "label": "vintage" }
+          ],
+          "help": "Cosmetic only."
+        }
+      ]
+    },
+
+    {
+      "id": "prompt",
+      "label": "Prompt",
+      "controls": [
+        {
+          "id": "ompTheme",
+          "label": "Prompt theme",
+          "type": "dropdown",
+          "target": { "source": "machine", "kind": "omp.theme", "property": "name" },
+          "options": [
+            { "value": "andalus", "label": "Andalus - Arabic ornaments, no Nerd Font glyphs" },
+            { "value": "none", "label": "none - leave the prompt alone" }
+          ],
+          "help": "The Andalus prompt deliberately contains no Arabic words. Windows Terminal renders Arabic left to right, so a word in the prompt would display reversed."
+        },
+        {
+          "id": "transient",
+          "label": "Transient prompt",
+          "type": "checkbox",
+          "target": { "source": "omp", "path": "transient_prompt", "mode": "presence" },
+          "help": "Collapses each finished prompt to a single ornament, so scrollback stays readable during a long session."
+        }
+      ]
+    },
+
+    {
+      "id": "packages",
+      "label": "Packages",
+      "controls": [
+        {
+          "id": "pkgPwsh",
+          "label": "PowerShell 7",
+          "type": "checkbox",
+          "target": { "source": "machine", "kind": "winget.package", "match": { "property": "id", "value": "Microsoft.PowerShell" }, "mode": "presence" },
+          "help": "Required. The module declares PowerShellVersion 7.4 and will not import on Windows PowerShell 5.1."
+        },
+        {
+          "id": "pkgTerminal",
+          "label": "Windows Terminal Preview",
+          "type": "checkbox",
+          "target": { "source": "machine", "kind": "winget.package", "match": { "property": "id", "value": "Microsoft.WindowsTerminal.Preview" }, "mode": "presence" },
+          "help": "Preview and stable keep separate settings folders. Switching between them changes where fragments must be written."
+        },
+        {
+          "id": "pkgOmp",
+          "label": "Oh My Posh",
+          "type": "checkbox",
+          "target": { "source": "machine", "kind": "winget.package", "match": { "property": "id", "value": "JanDeDobbeleer.OhMyPosh" }, "mode": "presence" },
+          "help": "Renders the prompt theme. Costs roughly 476 ms of shell startup."
+        },
+        {
+          "id": "pkgGit",
+          "label": "Git",
+          "type": "checkbox",
+          "target": { "source": "machine", "kind": "winget.package", "match": { "property": "id", "value": "Git.Git" }, "mode": "presence" },
+          "help": "The prompt's git segment reads status from it. Without git the segment silently disappears."
+        }
+      ]
+    },
+
+    {
+      "id": "modules",
+      "label": "PowerShell modules",
+      "controls": [
+        {
+          "id": "modTerminalIcons",
+          "label": "Terminal-Icons",
+          "type": "checkbox",
+          "costMs": 642,
+          "target": { "source": "machine", "kind": "psmodule", "match": { "property": "name", "value": "Terminal-Icons" }, "mode": "presence" },
+          "help": "The single most expensive item in the profile, and the one that needs the Nerd Font. Turning it off is the fastest way back under the startup budget."
+        },
+        {
+          "id": "modZ",
+          "label": "z",
+          "type": "checkbox",
+          "costMs": 241,
+          "target": { "source": "machine", "kind": "psmodule", "match": { "property": "name", "value": "z" }, "mode": "presence" },
+          "help": "Directory jumping by frecency."
+        },
+        {
+          "id": "modCompletionPredictor",
+          "label": "CompletionPredictor",
+          "type": "checkbox",
+          "costMs": 0,
+          "target": { "source": "machine", "kind": "psmodule", "match": { "property": "name", "value": "CompletionPredictor" }, "mode": "presence" },
+          "help": "Predictive IntelliSense source. Measured cost was below the resolution of the benchmark."
+        },
+        {
+          "id": "modPoshGit",
+          "label": "posh-git",
+          "type": "checkbox",
+          "costMs": 0,
+          "target": { "source": "machine", "kind": "psmodule", "match": { "property": "name", "value": "posh-git" }, "mode": "presence" },
+          "help": "Largely redundant when Oh My Posh already renders a git segment with fetch_status enabled."
+        }
+      ]
+    }
+  ]
+}
