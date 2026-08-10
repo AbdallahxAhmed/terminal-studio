@@ -13,11 +13,16 @@
     The lesson was never 'be more careful'. The lesson was that nothing in the
     project could have caught it, because nothing ever ran on 5.1. This file runs on
     5.1 in CI, which is the actual fix.
+
+    Stage 0 now has a second execution mode - a string piped into Invoke-Expression
+    - and several assertions below exist because that mode breaks things which are
+    perfectly safe in a script file.
 #>
 
 BeforeAll {
     $script:repoRoot = Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent
     $script:bootstrapPath = Join-Path -Path $script:repoRoot -ChildPath 'bootstrap/get.ps1'
+    $script:manifestPath = Join-Path -Path $script:repoRoot -ChildPath 'bootstrap/releases.json'
     $script:text = Get-Content -LiteralPath $script:bootstrapPath -Raw
 }
 
@@ -31,9 +36,7 @@ Describe 'bootstrap/get.ps1' {
         # Under powershell.exe this is a genuine 5.1 parser check rather than a
         # regex approximation of one. A parse error is the failure mode that no
         # amount of reading catches reliably, because the file looks fine to eyes
-        # trained on 7.x. It is also the open question left over from the old
-        # codebase, where an inline if-expression used as an argument may or may not
-        # have parsed on 5.1 - a question a test answers and an argument does not.
+        # trained on 7.x.
         $tokens = $null
         $errors = $null
         $null = [System.Management.Automation.Language.Parser]::ParseFile($script:bootstrapPath, [ref] $tokens, [ref] $errors)
@@ -47,12 +50,6 @@ Describe 'bootstrap/get.ps1' {
         $script:text | Should -Not -Match 'ConvertFrom-Json[^\r\n|]*-Depth'
     }
 
-    It 'declares the minimum engine it supports' {
-        # Stage 0 must announce 5.1 rather than inheriting whatever it happens to be
-        # launched with, so the contract is visible in the file itself.
-        $script:text | Should -Match '#Requires\s+-Version\s+5\.1'
-    }
-
     It 'avoids <Name>, which does not exist in 5.1' -ForEach @(
         @{ Name = 'null-coalescing'; Pattern = '\?\?' }
         @{ Name = 'null-conditional member access'; Pattern = '\?\.' }
@@ -62,6 +59,15 @@ Describe 'bootstrap/get.ps1' {
         @{ Name = 'the clean block'; Pattern = '(?m)^\s*clean\s*\{' }
     ) {
         $script:text | Should -Not -Match $Pattern
+    }
+
+    It 'guards the engine at runtime instead of with a #Requires directive' {
+        # #Requires is a directive for script files. Stage 0's primary execution mode
+        # is now a string handed to Invoke-Expression, where whether the directive is
+        # honoured, ignored, or fatal is not something to discover during someone's
+        # install. A numeric comparison behaves identically in both modes.
+        $script:text | Should -Match '\$PSVersionTable\.PSVersion\.Major'
+        $script:text | Should -Not -Match '#Requires'
     }
 
     It 'does all of its work inside a function invoked on the last statement' {
@@ -76,6 +82,28 @@ Describe 'bootstrap/get.ps1' {
         $lines[-1].Trim() | Should -BeLike 'Invoke-TSStageZero*'
     }
 
+    It 'never calls exit' {
+        # Under Invoke-Expression, exit terminates the host session rather than the
+        # script - it closes the window the user is standing in, mid-install, with no
+        # explanation. Every failure path has to throw.
+        $script:text | Should -Not -Match '(?m)^\s*exit\b'
+    }
+
+    It 'has no mandatory parameter' {
+        # A pipe into Invoke-Expression passes no arguments, so a mandatory parameter
+        # does not protect anything - it stops and prompts in the middle of a paste,
+        # which reads as a hang.
+        #
+        # Targets the attribute rather than the word, because -Match is
+        # case-insensitive and the file's own header discusses mandatory parameters
+        # in prose. A test that fails on its own explanation gets deleted.
+        $script:text | Should -Not -Match '\[Parameter\([^)]*Mandatory'
+    }
+
+    It 'accepts input through the environment, the only channel a bare pipe leaves' {
+        $script:text | Should -Match 'TS_VERSION'
+    }
+
     It 'refuses unverified downloads unless the user opts out explicitly' {
         # TLS authenticates the server, not the bytes. Without a hash there is no
         # artifact integrity, so the absence of one has to be a hard stop rather
@@ -84,13 +112,26 @@ Describe 'bootstrap/get.ps1' {
         $script:text | Should -Match 'SkipHashCheck'
     }
 
-    It 'pins to a release tag rather than a moving branch' {
-        # The single largest real risk in a remote-execution install line is not the
-        # pipe, it is pointing at a branch. A tag is reviewable; a branch is whatever
-        # someone pushed most recently.
-        $script:text | Should -Match 'Mandatory'
+    It 'downloads the payload from a release tag, never from a branch' {
+        # This is what the old 'must have a mandatory -Version' assertion was really
+        # protecting. A mandatory parameter was only ever a proxy for it; the property
+        # itself is that the archive URL is built from a tag, and that is now checked
+        # directly.
+        $script:text | Should -Match 'releases/download/\$Version'
         $script:text | Should -Not -Match 'refs/heads/'
-        $script:text | Should -Not -Match '/(main|master)/'
+    }
+
+    It 'references main only to read the manifest, never to fetch code or payload' {
+        # The blanket ban on 'main' had to go, because resolving a version and a hash
+        # requires reading something that moves. Narrowed to the actual intent: a main
+        # reference is acceptable for the manifest and for nothing else.
+        #
+        # Fetching that manifest from main concedes nothing, because get.ps1 is itself
+        # fetched from main - anyone able to rewrite one can rewrite the other.
+        $offenders = @($script:text -split "`r?`n") |
+            Where-Object { $_ -match '/main/' -and $_ -notmatch 'releases\.json' }
+
+        @($offenders).Count | Should -Be 0 -Because "these lines reach into main for something other than the manifest: $($offenders -join ' | ')"
     }
 
     It 'sets TLS 1.2 explicitly and avoids the Internet Explorer parser' {
@@ -99,5 +140,42 @@ Describe 'bootstrap/get.ps1' {
         # the IE DOM engine unless told otherwise, which may be absent or disabled.
         $script:text | Should -Match 'Tls12'
         $script:text | Should -Match '-UseBasicParsing'
+    }
+}
+
+Describe 'bootstrap/releases.json' {
+
+    # The manifest is what makes the one-liner possible, so it is also what breaks
+    # it. These run on 5.1 because that is the engine that will parse it in anger.
+
+    BeforeAll {
+        $script:manifest = Get-Content -LiteralPath $script:manifestPath -Raw | ConvertFrom-Json
+    }
+
+    It 'is valid JSON on the 5.1 parser' {
+        $script:manifest | Should -Not -BeNullOrEmpty
+    }
+
+    It 'names a latest release that actually exists in the list' {
+        # The one failure mode an explicit pointer introduces. Without this, promoting
+        # a release by editing one field and forgetting the other produces a one-liner
+        # that fails for everyone, immediately, with a message about a missing tag.
+        $versions = @($script:manifest.releases | ForEach-Object { [string] $_.version })
+
+        $script:manifest.latest | Should -Not -BeNullOrEmpty
+        $versions | Should -Contain $script:manifest.latest
+    }
+
+    It 'records a usable hash for every release' {
+        foreach ($release in @($script:manifest.releases)) {
+            $release.sha256 |
+                Should -Match '^[0-9A-Fa-f]{64}$' -Because "release $($release.version) must carry a full SHA-256, or the bootstrap will refuse to install it"
+        }
+    }
+
+    It 'uses tag-shaped version strings' {
+        foreach ($release in @($script:manifest.releases)) {
+            $release.version | Should -Match '^v\d+\.\d+\.\d+$'
+        }
     }
 }
