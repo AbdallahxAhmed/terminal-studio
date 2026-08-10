@@ -1,13 +1,16 @@
 {
   "schemaVersion": 1,
   "meta": {
-    "name": "volcanic",
+    "name": "andalus",
     "description": "One person's Windows terminal environment, expressed as data instead of as a script.",
     "notes": [
       "JSON rather than YAML for this document because ConvertFrom-Json is built into every supported engine, and a fresh machine has no YAML parser. The winget file next to this one is YAML only because winget requires it, and this project never parses it.",
       "Font sha256 values are intentionally blank. Fetching an archive over TLS proves who served it, not what it contains. apply must refuse to install a font whose hash is blank rather than trusting the transport, so filling these in is a prerequisite for apply rather than a nice-to-have.",
-      "terminal.global and shell.profile are resource kinds this build does not model. They are left in deliberately: plan reports them as unverified, which is the behaviour that stops a partial plan from reading like a converged machine.",
-      "The Volcanic Heat palette in fragments/volcanic.json is anchored on the two colours carried over verbatim, background #1A090D and foreground #FAD8D6. The remaining fourteen are derived and should be reconciled against the existing settings.json before anyone calls this authoritative."
+      "terminal.global, shell.profile and omp.theme are resource kinds this build does not model. They are left in deliberately: plan reports them as unverified, which is the behaviour that stops a partial plan from reading like a converged machine.",
+      "The Andalus palette is authored, not derived. Its sixteen colours come from manuscript illumination pigments: lapis lazuli for blue, gold leaf for yellow, vermilion for red, Persian turquoise for cyan, aubergine for purple, on a parchment foreground. The Volcanic Heat scheme it replaces had fourteen of its sixteen colours guessed. None of these are.",
+      "The prompt contains no Arabic words, and that is deliberate. Windows Terminal renders Arabic left to right even where it shapes and joins the letters correctly, so any Arabic string in a prompt displays reversed, and displays differently across builds. The theme uses three standalone ornaments from Arabic Presentation Forms instead: U+FD3E and U+FD3F ornate parentheses, and U+06DE start of Rub el Hizb. All three are bidi class Other Neutral with no joining behaviour, so they render the same in every direction context.",
+      "No Nerd Font glyph appears anywhere in the prompt. The ornaments are covered by fonts Windows already ships, so the prompt stays legible on a machine where the font resource has not been applied yet. That removes the bootstrap ordering problem where the prompt is unreadable until the fonts it depends on are installed.",
+      "useAcrylic with opacity 72 is a request, not a guarantee. Windows ignores it when Transparency effects are turned off in Settings, and suppresses it under Battery Saver. doctor must report the effective state rather than the requested one, because a converged terminal.fragment is not the same thing as a window that actually looks frosted."
     ]
   },
   "startupBudgetMs": 1000,
@@ -63,13 +66,18 @@
     {
       "kind": "terminal.fragment",
       "appName": "TerminalStudio",
-      "name": "volcanic",
-      "source": "desired-state/fragments/volcanic.json"
+      "name": "andalus",
+      "source": "desired-state/fragments/andalus.json"
+    },
+    {
+      "kind": "omp.theme",
+      "name": "andalus",
+      "source": "desired-state/omp/andalus.omp.json"
     },
     {
       "kind": "terminal.global",
       "defaultProfile": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
-      "theme": "Volcanic Mica"
+      "theme": "Andalus Mica"
     },
     {
       "kind": "shell.profile",
