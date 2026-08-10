@@ -16,9 +16,14 @@
     #
     # Invoke-TSApply is deliberately absent. apply is not implemented, and
     # exporting a stub that looks implemented is worse than exporting nothing.
+    #
+    # Get-TSControl is a read. The configurator surfaces render what it returns
+    # and print the edited document to stdout; nothing here writes desired state,
+    # for the same reason apply does not exist yet.
     FunctionsToExport = @(
-        'Invoke-TSDoctor'
+        'Get-TSControl'
         'Get-TSPlan'
+        'Invoke-TSDoctor'
     )
 
     CmdletsToExport   = @()
@@ -30,7 +35,7 @@
             Tags         = @('Windows', 'Terminal', 'WindowsTerminal', 'DesiredState', 'Configuration')
             LicenseUri   = 'https://github.com/AbdallahxAhmed/terminal-studio/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/AbdallahxAhmed/terminal-studio'
-            ReleaseNotes = 'Pre-alpha. Read-only commands only: doctor and plan. No apply yet.'
+            ReleaseNotes = 'Pre-alpha. Read-only commands only: doctor, plan, and configure. No apply yet.'
         }
     }
 }
