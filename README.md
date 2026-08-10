@@ -72,6 +72,7 @@ desired-state/          the product: what the machine should look like, as data
   assets/                 backdrops and other binary content
 bootstrap/
   get.ps1                 stage 0. 5.1-safe. Short enough to read before running.
+  releases.json           published versions and their hashes. The one-liner reads this.
 src/TerminalStudio/
   Public/                 the API. Returns objects. Never prints.
   Private/                internal helpers. No OS contact.
@@ -96,9 +97,63 @@ Two architectural rules, both **enforced by tests** rather than by good intentio
 An architecture rule that is not enforced by a test is a comment.
 `tests/unit/Architecture.Tests.ps1` asserts both rules mechanically.
 
-## Quick start
+## Install
 
-Clone and run. `doctor` is read-only and will not change anything on your machine.
+One line. No arguments, nothing to look up first:
+
+```powershell
+irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1 | iex
+```
+
+That resolves the release named `latest` in [`bootstrap/releases.json`](bootstrap/releases.json),
+verifies the downloaded archive against the SHA-256 recorded there, unpacks it under
+`%LOCALAPPDATA%\TerminalStudio\<tag>`, and runs `doctor`. Nothing on the machine is modified —
+`doctor` only reads.
+
+Reading the script before trusting it is the same command without the pipe:
+
+```powershell
+irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1
+```
+
+### Pinning a version
+
+A pipe into `Invoke-Expression` passes no arguments, so there are two ways to say anything to it.
+Environment variables, which survive the pipe:
+
+```powershell
+$env:TS_VERSION = 'v0.1.0'; irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1 | iex
+```
+
+Or the scriptblock form, which takes real parameters:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.1.0
+```
+
+`TS_INSTALL_ROOT` and `TS_NO_DOCTOR` work the same way as `TS_VERSION`. In the scriptblock form,
+`-Sha256` overrides the recorded hash when you have one from elsewhere, and `-SkipHashCheck`
+proceeds without integrity verification while saying plainly what was given up.
+
+### What the one-liner does and does not guarantee
+
+The archive comes from an immutable release tag and is checked against a hash committed to this
+repository in advance. Substituting a release asset therefore also requires editing `releases.json`,
+and that edit leaves a commit behind.
+
+The manifest is fetched from `main`, which looks like the moving-reference problem it is not:
+`get.ps1` is *also* fetched from `main`, so anyone able to rewrite the manifest can rewrite the
+script that reads it. Piping any URL into an interpreter means trusting whoever controls that URL,
+and no amount of hashing changes that. What the hash does buy is narrower and still worth having:
+the payload cannot be swapped independently of the manifest, and a truncated or corrupted download
+is refused rather than executed.
+
+Not claimed yet: signed releases and build provenance attestation. Both are on the roadmap. Until
+they exist, the trust boundary is this repository's commit history.
+
+## Working from a clone
+
+`doctor` is read-only and will not change anything on your machine.
 
 ```powershell
 git clone https://github.com/AbdallahxAhmed/terminal-studio
@@ -120,32 +175,6 @@ pwsh -File ./ts.ps1 configure -Json         # the model itself
 
 `configure` has no save path yet, by design: there is no write adapter, and a half-built save that
 can leave `settings.json` in pieces is worse than no save at all. It exits 3 to say so.
-
-## Installing from a release
-
-Take the tag and hash from the
-[Releases page](https://github.com/AbdallahxAhmed/terminal-studio/releases) — every release publishes
-both, along with this line already filled in:
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.1.0 -Sha256 PASTE_THE_PUBLISHED_HASH
-```
-
-`PASTE_THE_PUBLISHED_HASH` is a bareword rather than the usual `<angle-bracket>` placeholder because
-`<` is a reserved operator in PowerShell: an angle-bracket placeholder does not fail with "you forgot
-the hash", it fails at parse time with a message about an operator you never typed.
-
-Note the shape of the command too. The familiar `irm ... | iex` form **cannot** run this script:
-piping into `Invoke-Expression` passes no arguments, and `-Version` is mandatory, so the shell would
-stop and prompt for it mid-line. Fetching the script on its own is a fine way to read it before
-trusting it:
-
-```powershell
-irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1
-```
-
-`-Sha256` is not optional either. TLS proves who served the bytes, not what the bytes are. Pass the
-published hash, or pass `-SkipHashCheck` and accept unverified content as a deliberate choice.
 
 ## Cutting a release
 
@@ -182,6 +211,31 @@ timestamps is on the roadmap and is a prerequisite for meaningful build provenan
 `-AllowDirty` overrides the clean-tree check, and produces a release that cannot be reproduced from
 its tag. Use it for throwaway builds, never for a published one.
 
+### Recording the release
+
+This last step is the one that keeps the one-liner working. After the release is published, add it
+to `bootstrap/releases.json` and push:
+
+```json
+{
+  "version": "v0.1.1",
+  "asset": "TerminalStudio-v0.1.1.zip",
+  "sha256": "the hash the builder printed",
+  "tagCommit": "the commit the tag points at",
+  "published": "2026-08-10"
+}
+```
+
+Then move `latest` to the new tag. Both edits are needed; a test asserts that `latest` names an entry
+that actually exists, because forgetting the second edit breaks the install line for everyone at once.
+
+Recording *after* publishing is deliberate. The hash describes the bytes actually uploaded, and since
+archives are not byte-reproducible, a rebuild of the same commit will not match. Never edit a recorded
+hash to make a rebuild agree — publish a new version instead.
+
+Until the entry is pushed, `irm ... | iex` keeps installing the previous release. That is the correct
+failure mode: stale beats broken.
+
 ## Running the tests
 
 ```powershell
@@ -209,7 +263,9 @@ budget out loud.
 - [x] Charter, ADRs, lint configuration, CI matrix
 - [x] `ts configure` — one control definition, two renderers, read-only
 - [x] Release builder and verified bootstrap
+- [x] Single-line install with no arguments
 - [ ] Green CI
+- [ ] Have the release builder write the `releases.json` entry itself
 - [ ] Byte-reproducible archives (normalised timestamps)
 - [ ] `ts doctor` — read-only capability and drift detection
 - [ ] Desired-state schema and Windows Terminal fragment extraction
