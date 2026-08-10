@@ -44,8 +44,13 @@ function Get-TSFontNameAlias {
         and which one you see depends entirely on which API you asked. Upstream lists
         CascadiaCode among the families affected by this.
 
-        Anything that matches font names by string has to know this, or it will
-        confidently report a missing font that is installed and in use.
+        This table is load-bearing rather than convenient. Measured on a real
+        machine, neither font enumeration nor the registry will report the verbose
+        name for an installed Nerd Font - both return the abbreviation. The verbose
+        name exists, Windows Terminal accepts it, and no interface reachable from
+        here admits to it. So a family whose abbreviation is missing from this table
+        cannot be found by any route, and adding a new abbreviation here is the fix
+        for an entire class of false failures.
 
     .PARAMETER FamilyName
         The family name as written in desired state, for example
@@ -170,21 +175,26 @@ function Get-TSFontState {
         Reports whether a font family is installed, and says how it knows.
 
     .DESCRIPTION
-        Two oracles, asked in order of authority.
+        Two oracles. Neither is authoritative, which took measuring to establish.
 
-        DirectWrite first. It is the font system Windows Terminal, VS Code and every
-        other modern client actually resolve through, and it exposes typographic
-        family names - the long ones users type into settings.json. Both the machine
-        font directory and the per-user one are enumerated, because a font installed
-        without admin rights lives only in the latter.
+        Font enumeration first, via PresentationCore over the machine and per-user
+        font directories. This reads names out of the font files themselves. It was
+        originally added under the belief that it exposed typographic family names -
+        the verbose ones Windows Terminal accepts - and that belief was wrong. Probed
+        against a machine with CascadiaCode installed, it returns 'CaskaydiaCove NF',
+        'CaskaydiaCove NFM' and 'CaskaydiaCove NFP' and nothing longer. WPF reports
+        name ID 1, which for Nerd Fonts is the abbreviated GDI-compatible name.
 
-        The font registry second, as a fallback. It is worth asking because it is
-        cheap and always available, but it is a different namespace: it stores GDI
-        names, which for Nerd Fonts are the abbreviated ones, with a style word and a
-        format suffix attached. Nothing in it is ever spelled
-        'CaskaydiaCove Nerd Font Mono', which is precisely the name Windows Terminal
-        accepts - so the registry alone can only answer this question through
-        aliases, never directly.
+        The font registry second. Same namespace, different failure modes, which is
+        the honest reason to keep both. Enumeration reads the font; the registry
+        stores whatever the installer decided to write. On the machine above those
+        differ sharply - 48 registry values resolving to 3 families, because one
+        installer named its entries after filenames rather than after the font.
+        Either source can be wrong or absent, and they are wrong in different ways.
+
+        Since both report abbreviations, matching depends entirely on
+        Get-TSFontNameAlias. Nothing here can discover the verbose name; it can only
+        be predicted from the family in desired state.
 
         Returns three states rather than two. 'Unknown' exists because the previous
         boolean had no way to distinguish 'this font is absent' from 'I could not
@@ -211,11 +221,11 @@ function Get-TSFontState {
 
     $matchedName = $null
     $method = $null
-    $directWriteRan = $false
+    $enumerationRan = $false
     $registryRan = $false
     $reasons = [System.Collections.Generic.List[string]]::new()
 
-    # ------------------------------------------------------------ DirectWrite ---
+    # ------------------------------------------------------ font enumeration ---
     try {
         Add-Type -AssemblyName 'PresentationCore' -ErrorAction Stop
 
@@ -229,7 +239,7 @@ function Get-TSFontState {
                 continue
             }
 
-            $directWriteRan = $true
+            $enumerationRan = $true
 
             foreach ($family in [System.Windows.Media.Fonts]::GetFontFamilies($directory + '\')) {
                 $candidates = [System.Collections.Generic.List[string]]::new()
@@ -238,7 +248,8 @@ function Get-TSFontState {
                     $candidates.Add([string] $name)
                 }
 
-                # Source is 'file:///C:/Windows/Fonts/#Family Name' when enumerated.
+                # Source is 'file:///C:/Windows/Fonts/#CaskaydiaCove NFM' when
+                # enumerated from a directory, so the family name is the fragment.
                 if ($family.Source) {
                     $candidates.Add((([string] $family.Source) -split '#')[-1])
                 }
@@ -246,7 +257,7 @@ function Get-TSFontState {
                 foreach ($candidate in $candidates) {
                     if ($aliases -contains $candidate.Trim()) {
                         $matchedName = $candidate.Trim()
-                        $method = 'DirectWrite'
+                        $method = 'Enumeration'
                         break
                     }
                 }
@@ -258,7 +269,7 @@ function Get-TSFontState {
         }
     }
     catch {
-        $reasons.Add("DirectWrite enumeration unavailable ($($_.Exception.Message))")
+        $reasons.Add("font enumeration unavailable ($($_.Exception.Message))")
     }
 
     # --------------------------------------------------------------- registry ---
@@ -296,13 +307,16 @@ function Get-TSFontState {
 
     # ------------------------------------------------------------- conclusion ---
     if ($matchedName) {
+        $label = if ($method -eq 'Enumeration') { 'font enumeration' } else { 'font registry' }
+
         $detail = if ($matchedName -eq $FamilyName) {
-            "installed (via $method)"
+            "installed, found by $label"
         }
         else {
-            # Worth surfacing rather than hiding. Someone comparing this against the
-            # Fonts control panel will see the abbreviated name and needs to know why.
-            "installed as '$matchedName' (via $method)"
+            # Worth surfacing rather than hiding. The name Windows holds is almost
+            # never the name in desired state, and someone checking this against the
+            # Fonts control panel needs to know which string to look for.
+            "installed as '$matchedName', found by $label"
         }
 
         return [pscustomobject] @{
@@ -315,10 +329,10 @@ function Get-TSFontState {
         }
     }
 
-    if ($directWriteRan -or $registryRan) {
+    if ($enumerationRan -or $registryRan) {
         $searched = @()
-        if ($directWriteRan) { $searched += 'DirectWrite' }
-        if ($registryRan) { $searched += 'font registry' }
+        if ($enumerationRan) { $searched += 'font enumeration' }
+        if ($registryRan) { $searched += 'the font registry' }
 
         return [pscustomobject] @{
             PSTypeName  = 'TerminalStudio.FontState'
@@ -326,7 +340,7 @@ function Get-TSFontState {
             State       = 'Missing'
             MatchedName = $null
             Method      = ($searched -join ' and ')
-            Detail      = "not found in $($searched -join ' or '), under any of: $($aliases -join ', ')"
+            Detail      = "not found by $($searched -join ' or '), under any of: $($aliases -join ', ')"
         }
     }
 
