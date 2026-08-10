@@ -1,0 +1,100 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/v25.10.0/themes/schema.json",
+  "version": 3,
+  "final_space": true,
+  "console_title_template": "{{ .Folder }}",
+  "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#D4A537",
+          "template": "\u06de"
+        },
+        {
+          "type": "path",
+          "style": "plain",
+          "foreground": "#F0C75E",
+          "properties": {
+            "style": "agnoster_short",
+            "max_depth": 3,
+            "folder_separator_icon": " / "
+          },
+          "template": "\ufd3e {{ .Path }} \ufd3f"
+        },
+        {
+          "type": "git",
+          "style": "plain",
+          "foreground": "#49C5B6",
+          "foreground_templates": [
+            "{{ if or (.Working.Changed) (.Staging.Changed) }}#F0C75E{{ end }}",
+            "{{ if gt .Behind 0 }}#E06A5E{{ end }}"
+          ],
+          "properties": {
+            "fetch_status": true,
+            "branch_icon": ""
+          },
+          "template": "\ufd3e {{ .HEAD }}{{ if .Working.Changed }} *{{ .Working.String }}{{ end }}{{ if .Staging.Changed }} +{{ .Staging.String }}{{ end }} \ufd3f"
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "right",
+      "segments": [
+        {
+          "type": "executiontime",
+          "style": "plain",
+          "foreground": "#8A93A8",
+          "properties": {
+            "threshold": 500,
+            "style": "austin"
+          },
+          "template": "{{ .FormattedMs }}"
+        },
+        {
+          "type": "time",
+          "style": "plain",
+          "foreground": "#8A93A8",
+          "properties": {
+            "time_format": "15:04"
+          },
+          "template": "\ufd3e {{ .CurrentDate | date .Format }} \ufd3f"
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "status",
+          "style": "plain",
+          "foreground": "#D4A537",
+          "foreground_templates": [
+            "{{ if gt .Code 0 }}#C0453C{{ end }}"
+          ],
+          "properties": {
+            "always_enabled": true
+          },
+          "template": "\u276f"
+        }
+      ]
+    }
+  ],
+  "transient_prompt": {
+    "foreground": "#D4A537",
+    "background": "transparent",
+    "template": "\u06de "
+  },
+  "secondary_prompt": {
+    "foreground": "#8A93A8",
+    "background": "transparent",
+    "template": "\u276f\u276f "
+  }
+}
