@@ -6,13 +6,15 @@
     "notes": [
       "JSON rather than YAML for this document because ConvertFrom-Json is built into every supported engine, and a fresh machine has no YAML parser. The winget file next to this one is YAML only because winget requires it, and this project never parses it.",
       "Font sha256 values are intentionally blank. Fetching an archive over TLS proves who served it, not what it contains. apply must refuse to install a font whose hash is blank rather than trusting the transport, so filling these in is a prerequisite for apply rather than a nice-to-have.",
-      "terminal.global, shell.profile, terminal.asset and omp.theme are resource kinds this build does not model. They are left in deliberately: plan reports them as unverified, which is the behaviour that stops a partial plan from reading like a converged machine.",
+      "terminal.global, shell.profile, terminal.asset and omp.theme are resource kinds this build does not model. They are left in deliberately: plan reports them as unverified, which is the behaviour that stops a partial plan from reading like a converged machine. shell.profile now has a source file, which changes nothing about that: content existing and content being checkable are different properties, and merging them is how a plan starts reporting convergence it never established.",
       "The Andalus palette is authored, not derived. Its sixteen colours come from manuscript illumination pigments: lapis lazuli for blue, gold leaf for yellow, vermilion for red, Persian turquoise for cyan, aubergine for purple, on a parchment foreground. The Volcanic Heat scheme it replaces had fourteen of its sixteen colours guessed. None of these are.",
       "The prompt contains no Arabic words, and that is deliberate. Windows Terminal renders Arabic left to right even where it shapes and joins the letters correctly, so any Arabic string in a prompt displays reversed, and displays differently across builds. The theme uses three standalone ornaments from Arabic Presentation Forms instead: U+FD3E and U+FD3F ornate parentheses, and U+06DE start of Rub el Hizb. All three are bidi class Other Neutral with no joining behaviour, so they render the same in every direction context. Arabic calligraphy reaches the window as a background image, where it is pixels and bidi never applies.",
       "The prompt now depends on Nerd Font glyphs. This reverses an earlier decision recorded here, and the reversal is not free. The rounded segment caps U+E0B6 and U+E0B4, and the os, folder, branch and clock icons, all live in the Private Use Area and exist only in a patched font. On a machine where the font resource has not been applied yet the prompt renders as replacement boxes, which is a real bootstrap ordering problem the previous zero-glyph design did not have. doctor verifying that the font family is genuinely installed is therefore load-bearing now rather than informational.",
       "The frosted panels behind the text in the reference image are not a Windows Terminal capability. Terminal paints one uniform character grid: there is no per-region background, no rounded rectangle and no drop shadow anywhere in the settings schema. Those panels have to be painted into the background image. This fixes the requirement for the asset: a dark translucent wash across the left two thirds so text stays legible, with the artwork weighted to the right.",
       "backgroundImage composites on top of the acrylic layer rather than beneath it, so image opacity and window frosting trade against each other directly. At backgroundImageOpacity 1.0 the blur is completely hidden and the window is frosted only in the settings file. 0.85 is the compromise being tested.",
-      "useAcrylic with opacity 72 is a request, not a guarantee. Windows ignores it when Transparency effects are turned off in Settings, and suppresses it under Battery Saver. doctor must report the effective state rather than the requested one, because a converged terminal.fragment is not the same thing as a window that actually looks frosted."
+      "useAcrylic with opacity 72 is a request, not a guarantee. Windows ignores it when Transparency effects are turned off in Settings, and suppresses it under Battery Saver. doctor must report the effective state rather than the requested one, because a converged terminal.fragment is not the same thing as a window that actually looks frosted.",
+      "Left padding cannot be used to keep terminal output clear of the calligraphy rail in the backdrop, and the next person to try should read this before raising the number. padding is absolute DIPs; the background image is scaled to the window. The rail therefore always sits at about 6.7 percent of the current width, so a value chosen for one window size drifts at every other. Measured cost of clearing it at 1920: 0.13 of contrast ratio gained at the worst pixel, 0.05 lost at the fifth percentile. It is a composition choice, not a legibility one.",
+      "The bootstrap one-liner in ADR-003 does not work yet, for three independent reasons, and none of them are in get.ps1. The repository is private, so raw.githubusercontent returns 404 to an unauthenticated fetch. No release exists, so the archive URL get.ps1 builds would also 404. And get.ps1 declares Version as mandatory with a validation pattern, which a bare irm-pipe-iex cannot satisfy because piping into Invoke-Expression passes no arguments - the shell would stop and prompt for it. Publishing means making the repository public, tagging a release, attaching the archive, and documenting the call form that can actually pass parameters."
     ]
   },
   "startupBudgetMs": 1000,
@@ -66,6 +68,11 @@
       "version": "1.1.0"
     },
     {
+      "kind": "psmodule",
+      "name": "PSReadLine",
+      "version": "2.3.5"
+    },
+    {
       "kind": "terminal.fragment",
       "appName": "TerminalStudio",
       "name": "andalus",
@@ -81,7 +88,8 @@
     {
       "kind": "omp.theme",
       "name": "andalus",
-      "source": "desired-state/omp/andalus.omp.json"
+      "source": "desired-state/omp/andalus.omp.json",
+      "destination": "~/.poshthemes/andalus.omp.json"
     },
     {
       "kind": "terminal.global",
@@ -90,7 +98,8 @@
     },
     {
       "kind": "shell.profile",
-      "target": "CurrentUserCurrentHost"
+      "target": "CurrentUserCurrentHost",
+      "source": "desired-state/profile/Microsoft.PowerShell_profile.ps1"
     }
   ]
 }
