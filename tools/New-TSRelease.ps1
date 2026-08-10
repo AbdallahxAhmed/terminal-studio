@@ -13,6 +13,9 @@
     create the GitHub release for the same tag, attach both, and paste the
     install line it prints into the release notes.
 
+    Run it from a clean checkout. It will refuse otherwise, because an archive
+    built from uncommitted changes cannot be rebuilt from the tag that names it.
+
 .PARAMETER Version
     Release tag, for example v0.1.0. Must match ModuleVersion in the manifest.
 
@@ -21,6 +24,10 @@
 
 .PARAMETER Force
     Overwrite an existing archive for this version.
+
+.PARAMETER AllowDirty
+    Build even though the working tree has uncommitted changes. The resulting
+    artifact will not be reproducible from its tag.
 
 .EXAMPLE
     ./tools/New-TSRelease.ps1 -Version v0.1.0
@@ -34,7 +41,9 @@ param(
 
     [string] $OutputDirectory,
 
-    [switch] $Force
+    [switch] $Force,
+
+    [switch] $AllowDirty
 )
 
 Set-StrictMode -Version Latest
@@ -44,6 +53,31 @@ $repoRoot = Split-Path -Path $PSScriptRoot -Parent
 
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path -Path $repoRoot -ChildPath 'artifacts'
+}
+
+# A tag is a claim that the artifact can be rebuilt from it. Uncommitted
+# changes make that claim false, and nothing downstream would ever notice.
+$git = Get-Command -Name 'git' -CommandType Application -ErrorAction SilentlyContinue
+
+if ($git -and -not $AllowDirty) {
+    $status = $null
+    $isCheckout = $false
+
+    Push-Location -LiteralPath $repoRoot
+    try {
+        $status = & $git.Path 'status' '--porcelain' 2>$null
+        $isCheckout = ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        $isCheckout = $false
+    }
+    finally {
+        Pop-Location
+    }
+
+    if ($isCheckout -and $status) {
+        throw "Working tree at $repoRoot has uncommitted changes, so this archive could not be rebuilt from tag $Version. Commit first, build from a fresh clone, or pass -AllowDirty to accept an unreproducible release."
+    }
 }
 
 # What ships. Everything else is scaffolding for producing it.
@@ -98,7 +132,7 @@ try {
         }
     }
 
-    # get.ps1 tells the user to run <target>\ts.ps1. Assert the layout that
+    # get.ps1 tells the user to run <target>/ts.ps1. Assert the layout that
     # promise depends on, here, rather than discovering it is wrong later.
     if (-not (Test-Path -LiteralPath (Join-Path $staging 'ts.ps1'))) {
         throw 'ts.ps1 is not at the archive root. bootstrap/get.ps1 depends on that path.'
@@ -121,13 +155,18 @@ Set-Content -LiteralPath $hashPath -Value "$hash  $asset" -Encoding ASCII
 $sizeKb = [math]::Round((Get-Item -LiteralPath $archive).Length / 1KB)
 
 $raw = 'https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1'
+$install = "& ([scriptblock]::Create((irm $raw))) -Version $Version -Sha256 $hash"
 
 Write-Host ''
 Write-Host "  archive  $archive  ($sizeKb KB)"
 Write-Host "  sha256   $hash"
 Write-Host "  written  $hashPath"
 Write-Host ''
-Write-Host '  Next: create the release, attach the archive, and publish this line:'
+Write-Host '  Publish it:'
 Write-Host ''
-Write-Host "    & ([scriptblock]::Create((irm $raw))) -Version $Version -Sha256 $hash"
+Write-Host "    gh release create $Version `"$archive`" --title $Version --notes `"``````powershell`n$install`n``````»".Replace('»', '"')
+Write-Host ''
+Write-Host '  Then this is the install line, hash already filled in:'
+Write-Host ''
+Write-Host "    $install"
 Write-Host ''
