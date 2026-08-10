@@ -2,16 +2,15 @@
 
 <#
 .SYNOPSIS
-    Builds a Terminal Studio release archive and its SHA-256.
+    Builds a Terminal Studio release archive, its SHA-256, and its release notes.
 
 .DESCRIPTION
     Produces exactly the artifact bootstrap/get.ps1 expects to download:
 
         TerminalStudio-<Version>.zip
 
-    with ts.ps1 at the archive root, and writes the hash alongside it. Run this,
-    create the GitHub release for the same tag, attach both, and paste the
-    install line it prints into the release notes.
+    with ts.ps1 at the archive root, plus the hash and a notes file beside it.
+    Prints the gh command that publishes all of it.
 
     Run it from a clean checkout. It will refuse otherwise, because an archive
     built from uncommitted changes cannot be rebuilt from the tag that names it.
@@ -157,14 +156,60 @@ $sizeKb = [math]::Round((Get-Item -LiteralPath $archive).Length / 1KB)
 $raw = 'https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1'
 $install = "& ([scriptblock]::Create((irm $raw))) -Version $Version -Sha256 $hash"
 
+# Notes go in a file rather than into --notes on the command line. Fenced
+# markdown inside a quoted PowerShell argument means literal backticks inside
+# a double-quoted string, and backtick is the escape character, so the command
+# cannot survive being copied. --notes-file removes the problem instead of
+# escaping around it.
+$fence = '```'
+
+$notes = @"
+## Install
+
+${fence}powershell
+$install
+${fence}
+
+Requires PowerShell 7 to run. The bootstrap itself is Windows PowerShell 5.1
+compatible, so it works before pwsh is installed.
+
+The piped ``irm ... | iex`` form will not work here: it passes no arguments, and
+-Version is mandatory, so the shell would stop and prompt mid-line. Read the
+script first if you like - fetching it on its own prints it without running it.
+
+## Verify
+
+SHA-256 of $asset
+
+${fence}
+$hash
+${fence}
+
+${fence}powershell
+(Get-FileHash .\$asset -Algorithm SHA256).Hash
+${fence}
+
+The hash is not decoration. TLS proves who served the bytes, not what the bytes
+are. Passing -Sha256 is what makes this an install of a reviewed artifact rather
+than an install of whatever the host returned.
+"@
+
+$notesPath = Join-Path -Path $OutputDirectory -ChildPath "TerminalStudio-$Version.notes.md"
+
+# Not Set-Content -Encoding UTF8: that means no BOM on 7 and a BOM on 5.1, and a
+# BOM would render as a stray character at the top of the published page.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($notesPath, $notes, $utf8NoBom)
+
 Write-Host ''
 Write-Host "  archive  $archive  ($sizeKb KB)"
 Write-Host "  sha256   $hash"
-Write-Host "  written  $hashPath"
+Write-Host "  hashfile $hashPath"
+Write-Host "  notes    $notesPath"
 Write-Host ''
 Write-Host '  Publish it:'
 Write-Host ''
-Write-Host "    gh release create $Version `"$archive`" --title $Version --notes `"``````powershell`n$install`n``````»".Replace('»', '"')
+Write-Host "    gh release create $Version `"$archive`" --title $Version --notes-file `"$notesPath`""
 Write-Host ''
 Write-Host '  Then this is the install line, hash already filled in:'
 Write-Host ''
