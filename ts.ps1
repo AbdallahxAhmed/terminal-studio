@@ -22,7 +22,7 @@
     1 for both 'broken' and 'drifted' forces the caller to parse text.
 
 .PARAMETER Command
-    doctor, plan, apply, or version.
+    doctor, plan, configure, apply, or version.
 
 .PARAMETER Json
     Emit result objects as JSON instead of a rendered report. This is the
@@ -33,10 +33,20 @@
     For plan, also list resources already in the desired state.
 
 .PARAMETER Unicode
-    For doctor, use symbol markers. Only worth passing once fonts are verified.
+    For doctor and configure, use symbol markers. Only worth passing once fonts
+    are verified.
 
 .PARAMETER SkipStartupMeasurement
     Skip the shell startup benchmark, which is the slowest check.
+
+.PARAMETER Surface
+    For configure, which renderer to use. Tui draws a form in the terminal and
+    works everywhere. Wpf opens a window and needs a desktop and an STA thread.
+    Both render the same control definition; neither knows what a control means.
+
+.PARAMETER ReadOnly
+    For configure, draw the form and read no input. Useful unattended, and the
+    reason CI can exercise the renderer without a console waiting on Read-Host.
 
 .PARAMETER DesiredStatePath
     Override the desired-state document.
@@ -48,13 +58,19 @@
     ./ts.ps1 plan -Json
 
 .EXAMPLE
+    ./ts.ps1 configure
+
+.EXAMPLE
+    pwsh -STA -File ./ts.ps1 configure -Surface Wpf
+
+.EXAMPLE
     ./ts.ps1 doctor -SkipStartupMeasurement; if ($LASTEXITCODE -eq 2) { 'drift' }
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('doctor', 'plan', 'apply', 'version')]
+    [ValidateSet('doctor', 'plan', 'configure', 'apply', 'version')]
     [string] $Command = 'doctor',
 
     [switch] $Json,
@@ -64,6 +80,11 @@ param(
     [switch] $Unicode,
 
     [switch] $SkipStartupMeasurement,
+
+    [ValidateSet('Tui', 'Wpf')]
+    [string] $Surface = 'Tui',
+
+    [switch] $ReadOnly,
 
     [string] $DesiredStatePath
 )
@@ -130,6 +151,38 @@ switch ($Command) {
         }
 
         exit 0
+    }
+
+    'configure' {
+        $controls = @(Get-TSControl @common)
+
+        if ($Json) {
+            # The model, not a rendering of it. Anything that can read JSON is a
+            # client of the configurator on equal terms with the two surfaces.
+            $controls | ConvertTo-Json -Depth 5
+            exit 0
+        }
+
+        if ($Surface -eq 'Wpf') {
+            $edited = @($controls | Show-TSControlWindow)
+        }
+        else {
+            $edited = @($controls | Show-TSControlForm -Interactive:(-not $ReadOnly) -Unicode:$Unicode)
+        }
+
+        if ($edited.Count -eq 0) {
+            exit 0
+        }
+
+        # Printed, so a decision the user just made is not thrown away, then
+        # exited 3, because it has not been stored. Persisting desired state
+        # needs a writer and a change journal, and neither exists in 0.1.0.
+        # Exiting 0 here would tell every caller the settings were saved.
+        $edited | ConvertTo-Json -Depth 5
+
+        Write-Warning 'Saving desired state is not implemented in 0.1.0. The choices above were printed, not stored.'
+        Write-Warning 'Run: ./ts.ps1 configure -Json > controls.json   to keep the model for later.'
+        exit 3
     }
 
     'apply' {
