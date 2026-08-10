@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "schemaVersion": 1,
+
+  "notes": [
+    "Read by bootstrap/get.ps1 so that 'irm <url> | iex' can resolve a version and a hash without arguments, which a bare pipe cannot supply.",
+    "'latest' is what the one-liner installs when no version is given. It must name an entry in 'releases'.",
+    "A release is recorded here AFTER it is published, not before. The hash describes the bytes actually uploaded to the release, and archives are not byte-reproducible yet, so a rebuild of the same commit will not match. Never edit a recorded hash to make a rebuild agree - publish a new version instead.",
+    "Recording the hash in git is the integrity story. Substituting a release asset would require also editing this file, which leaves a commit behind.",
+    "'tagCommit' is the commit the release tag points at, which is verifiable independently. It is not a claim that the archive is reproducible from that tree."
+  ],
+
+  "latest": "v0.1.0",
+
+  "releases": [
+    {
+      "version": "v0.1.0",
+      "asset": "TerminalStudio-v0.1.0.zip",
+      "sha256": "4B5972C53904BBB68568A2EC510FF72ADB8AE00D586C02496C8A1BAAD58B070C",
+      "tagCommit": "d1d4871aed3abcbc83a7eedf23bbdd76e4d9b4cb",
+      "published": "2026-08-10",
+      "notes": "First tagged build. doctor only; configure is read-only and apply does not exist."
+    }
+  ]
+}
