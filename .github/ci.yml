@@ -1,0 +1,112 @@
+# ---------------------------------------------------------------------------
+# STAGED WORKFLOW - NOT YET ACTIVE
+#
+# This file is the project's CI definition. It is parked here instead of at
+# .github/workflows/ci.yml because the integration used to create this
+# repository was not granted the "Workflows" permission, which GitHub requires
+# for any write under .github/workflows/.
+#
+# To activate (one command, then push):
+#
+#     git mv .github/ci.yml .github/workflows/ci.yml
+#     git commit -m "ci: activate workflow"
+#     git push
+#
+# The content below is final and needs no edits.
+# ---------------------------------------------------------------------------
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (PSScriptAnalyzer)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -MinimumVersion 1.22.0 -Force -Scope CurrentUser
+
+      - name: Analyze
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Scoped to shipping code. Test files are validated by being executed,
+          # and Pester's $script: scoping trips analyzer rules that do not apply.
+          $targets = @('./src', './bootstrap', './ts.ps1') |
+              Where-Object { Test-Path -LiteralPath $_ }
+
+          if (-not $targets) {
+              Write-Host 'No analyzable targets yet; skipping.'
+              exit 0
+          }
+
+          $findings = Invoke-ScriptAnalyzer -Path $targets -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+
+          if ($findings) {
+              $findings |
+                  Select-Object Severity, RuleName, ScriptName, Line, Message |
+                  Format-Table -AutoSize |
+                  Out-String -Width 200 |
+                  Write-Host
+              throw "PSScriptAnalyzer reported $($findings.Count) finding(s)."
+          }
+
+          Write-Host 'PSScriptAnalyzer: clean.'
+
+  test:
+    name: test (${{ matrix.label }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Both legs are required. The 5.1 leg is the only thing that catches
+          # cross-edition defects in the bootstrap, which by definition runs
+          # before PowerShell 7 exists on a clean machine.
+          - label: Windows PowerShell 5.1
+            shell: powershell
+          - label: PowerShell 7
+            shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report engine
+        shell: ${{ matrix.shell }}
+        run: $PSVersionTable | Format-List | Out-String | Write-Host
+
+      - name: Install Pester
+        shell: ${{ matrix.shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Run tests
+        shell: ${{ matrix.shell }}
+        run: ./tests/Invoke-Tests.ps1
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testresults-${{ matrix.shell }}
+          path: testresults.xml
+          if-no-files-found: ignore
