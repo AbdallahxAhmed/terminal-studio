@@ -98,6 +98,10 @@ Describe 'registered font name matching' {
         @{ name = 'CaskaydiaCove NFM Bold Italic (TrueType)' }
         @{ name = 'CaskaydiaCove NFM SemiLight (TrueType)' }
     ) {
+        # Not merely a style suffix. A Win32 family holds at most four styles, so the
+        # extra weights are separate families - 'CaskaydiaCove NFM ExtraLight' is what
+        # the font itself reports as its Win32 family name, not a decoration on top of
+        # 'CaskaydiaCove NFM'. Matching the family alone would find a quarter of them.
         InModuleScope 'TerminalStudio' -Parameters @{ name = $name; aliases = $script:monoAliases } {
             Test-TSFontNameMatch -RegisteredName $name -Alias $aliases | Should -BeTrue
         }
@@ -108,7 +112,7 @@ Describe 'registered font name matching' {
         @{ name = 'CaskaydiaCoveNerdFontMono-SemiBoldItalic (TrueType)' }
         @{ name = 'CaskaydiaCoveNerdFontMono-ExtraLight (TrueType)' }
     ) {
-        # The form the previous fix missed. It only passed on the reporting machine
+        # The form the first fix missed. It only passed on the reporting machine
         # because the abbreviated set happened to be installed alongside it.
         InModuleScope 'TerminalStudio' -Parameters @{ name = $name; aliases = $script:monoAliases } {
             Test-TSFontNameMatch -RegisteredName $name -Alias $aliases | Should -BeTrue
@@ -157,14 +161,54 @@ Describe 'registered font name matching' {
 
 Describe 'Get-TSFontState' {
 
+    # Shape only. Which fonts exist is a property of the runner, not of this code,
+    # and a test that demanded a particular answer would just re-encode the runner's
+    # font list.
+
     It 'answers with one of three states and always explains itself' {
-        # Shape only. Which fonts exist is a property of the runner, not of this
-        # code, and asserting a particular answer would only re-encode the runner.
         InModuleScope 'TerminalStudio' {
             $state = Get-TSFontState -FamilyName 'CaskaydiaCove Nerd Font Mono'
 
             $state.State | Should -BeIn @('Installed', 'Missing', 'Unknown')
             $state.Detail | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'names the route it found the font by, from a closed set' {
+        InModuleScope 'TerminalStudio' {
+            (Get-TSFontState -FamilyName 'CaskaydiaCove Nerd Font Mono').Method |
+                Should -BeIn @('Enumeration', 'Registry', 'Typeface', 'None')
+        }
+    }
+
+    It 'separates the route taken from the places looked' {
+        # Method used to hold the discovery route on success and a prose list of
+        # search locations on failure. A property whose meaning depends on the value
+        # of a sibling property is one that callers end up parsing rather than
+        # reading.
+        InModuleScope 'TerminalStudio' {
+            $state = Get-TSFontState -FamilyName 'Definitely Not A Real Font 9000'
+
+            $state.Method | Should -Be 'None'
+            $state.Searched | Should -Not -BeNull
+        }
+    }
+
+    It 'claims Missing only after having actually searched somewhere' {
+        # The distinction the original boolean could not express, and the reason this
+        # file exists in its current form. Missing is a claim about the machine.
+        # Unknown is a claim about the check. Passes on Windows and on a Linux runner
+        # without either one having to know which it is.
+        InModuleScope 'TerminalStudio' {
+            $state = Get-TSFontState -FamilyName 'Definitely Not A Real Font 9000'
+
+            if ($state.State -eq 'Missing') {
+                @($state.Searched).Count | Should -BeGreaterThan 0
+            }
+            else {
+                $state.State | Should -Be 'Unknown'
+                @($state.Searched).Count | Should -Be 0
+            }
         }
     }
 
