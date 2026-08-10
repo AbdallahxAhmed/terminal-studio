@@ -83,6 +83,87 @@ function Get-TSFontNameAlias {
     $aliases.ToArray() | Select-Object -Unique
 }
 
+function Test-TSFontNameMatch {
+    <#
+    .SYNOPSIS
+        Decides whether a registered font name refers to one of the given families.
+
+    .DESCRIPTION
+        This is the rule that got the font check wrong twice, so it lives here as a
+        pure function rather than inline in registry enumeration - a predicate buried
+        inside a loop over the live registry cannot be tested, and the two defects it
+        carried were both trivially demonstrable given a name and an expectation.
+
+        Registered names for a single family follow at least three conventions, all
+        three of which were observed on one machine at the same time:
+
+            CaskaydiaCove NFM Regular (TrueType)          spaced, abbreviated
+            CaskaydiaCoveNerdFontMono-Regular (TrueType)  PostScript, hyphenated
+            CaskaydiaCove Nerd Font Mono                  the plain family name
+
+        So the style word is space-separated in one form and hyphen-separated in
+        another, and the family part is spaced in one and not in the other. Three
+        rules, therefore:
+
+            equality          - the name is the family, nothing appended
+            space boundary    - the family, then a style word
+            hyphen boundary   - the family with spaces removed, then a style word
+
+        Each rule requires a boundary. That is the whole point, and the reason none
+        of them accepts 'CaskaydiaCove NFP Regular' when asked about NFM: prefix
+        matching without a boundary would quietly conflate three distinct families
+        that differ only in their last letter.
+
+    .PARAMETER RegisteredName
+        A name as it appears in the font registry, with or without the format suffix.
+
+    .PARAMETER Alias
+        Candidate family names, normally from Get-TSFontNameAlias.
+
+    .OUTPUTS
+        True if the registered name is a face of one of the candidate families.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $RegisteredName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Alias
+    )
+
+    # 'CaskaydiaCove NFM Regular (TrueType)' -> 'CaskaydiaCove NFM Regular'.
+    # The suffix describes the file format and is present for OpenType files too.
+    $bare = (([string] $RegisteredName) -replace '\s*\((TrueType|OpenType)\)\s*$', '').Trim()
+
+    # 'CaskaydiaCoveNerdFontMono-Regular' -> 'CaskaydiaCoveNerdFontMono'
+    $head = (($bare -replace '\s', '') -split '-', 2)[0]
+
+    foreach ($candidate in $Alias) {
+        # Escaped, because a family name is data, not a pattern. A font called
+        # 'Foo [Bold]' would otherwise be read as a character class and match
+        # nothing - the same category of bug as the one this function exists to fix.
+        $pattern = [System.Management.Automation.WildcardPattern]::Escape($candidate)
+
+        if ($bare -eq $candidate) {
+            return $true
+        }
+
+        if ($bare -like "$pattern *") {
+            return $true
+        }
+
+        if ($head -eq ($candidate -replace '\s', '')) {
+            return $true
+        }
+    }
+
+    $false
+}
+
 function Get-TSFontState {
     <#
     .SYNOPSIS
@@ -100,8 +181,10 @@ function Get-TSFontState {
         The font registry second, as a fallback. It is worth asking because it is
         cheap and always available, but it is a different namespace: it stores GDI
         names, which for Nerd Fonts are the abbreviated ones, with a style word and a
-        format suffix attached. 'CaskaydiaCove NFM Regular (TrueType)' and
-        'CaskaydiaCove Nerd Font Mono' are the same font.
+        format suffix attached. Nothing in it is ever spelled
+        'CaskaydiaCove Nerd Font Mono', which is precisely the name Windows Terminal
+        accepts - so the registry alone can only answer this question through
+        aliases, never directly.
 
         Returns three states rather than two. 'Unknown' exists because the previous
         boolean had no way to distinguish 'this font is absent' from 'I could not
@@ -196,20 +279,11 @@ function Get-TSFontState {
                 Where-Object { $_.Name -notlike 'PS*' }
 
             foreach ($entry in $entries) {
-                # 'CaskaydiaCove NFM Regular (TrueType)' -> 'CaskaydiaCove NFM Regular'
-                $bare = ([string] $entry.Name) -replace '\s*\((TrueType|OpenType)\)\s*$', ''
-                $bare = $bare.Trim()
-
-                foreach ($alias in $aliases) {
-                    # Exact, or the alias followed by a style word such as Regular or Bold.
-                    if ($bare -eq $alias -or $bare -like "$alias *") {
-                        $matchedName = [string] $entry.Name
-                        $method = 'Registry'
-                        break
-                    }
+                if (Test-TSFontNameMatch -RegisteredName ([string] $entry.Name) -Alias $aliases) {
+                    $matchedName = [string] $entry.Name
+                    $method = 'Registry'
+                    break
                 }
-
-                if ($matchedName) { break }
             }
 
             if ($matchedName) { break }
