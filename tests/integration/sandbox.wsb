@@ -1,0 +1,44 @@
+<!--
+  Windows Sandbox harness: a genuinely clean Windows, thrown away on close.
+
+  This exists because the hardest bug class in this project is unreproducible on
+  the machine that has already been set up. Every interesting failure - no winget,
+  no PowerShell 7, no Nerd Font, a settings file that has never been written -
+  happens on a fresh install and nowhere else. Testing a first-run experience on a
+  machine that has already had its first run is not testing it.
+
+  Requires the Windows Sandbox feature (Containers-DisposableClientVM), which is
+  available on Pro and Enterprise editions.
+
+  Two deliberate choices:
+
+    ReadOnly       The repository is mapped read-only, so a failed experiment inside
+                   the VM cannot damage the working tree that produced it. Tests
+                   that need to write use the sandbox's own temp storage.
+
+    vGPU Disable   No GPU acceleration, which is closer to a VM, an RDP session, or
+                   a server than a developer laptop is. It also demonstrates the
+                   claim made in ADR-002: the interface must degrade to plain text
+                   rather than depending on a rich rendering surface.
+
+  HostFolder must be an absolute path, so edit the line below to wherever this
+  repository lives before running the file. Windows Sandbox will not expand a
+  relative path or an environment variable here.
+-->
+<Configuration>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\src\terminal-studio</HostFolder>
+      <SandboxFolder>C:\terminal-studio</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+
+  <Networking>Enable</Networking>
+  <vGPU>Disable</vGPU>
+  <MemoryInMB>4096</MemoryInMB>
+
+  <LogonCommand>
+    <Command>powershell.exe -NoExit -ExecutionPolicy Bypass -Command "Set-Location 'C:\terminal-studio'; Write-Host ''; Write-Host 'Clean Windows. Nothing is installed. This is the machine the bootstrap has to survive.' -ForegroundColor Cyan; Write-Host ''; Write-Host ('Engine here: ' + $PSVersionTable.PSEdition + ' ' + $PSVersionTable.PSVersion) -ForegroundColor DarkGray; Write-Host 'That is Windows PowerShell 5.1, which is exactly why bootstrap/get.ps1 is written to 5.1 rules.' -ForegroundColor DarkGray; Write-Host ''; Write-Host 'Step 1:  winget install --id Microsoft.PowerShell --exact' -ForegroundColor Yellow; Write-Host 'Step 2:  pwsh -NoLogo -File .\ts.ps1 doctor' -ForegroundColor Yellow; Write-Host ''; Write-Host 'Expect failures. On a clean machine a clean bill of health would mean the checks are not looking.' -ForegroundColor DarkGray; Write-Host ''"</Command>
+  </LogonCommand>
+</Configuration>
