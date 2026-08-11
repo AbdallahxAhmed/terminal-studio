@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStudio.psm1'
-    ModuleVersion     = '0.1.1'
+    ModuleVersion     = '0.2.0'
     GUID              = 'f3b1c2d4-5e6a-4b8c-9d0e-1a2b3c4d5e6f'
     Author            = 'Abdallah Ahmed'
     Copyright         = '(c) 2026 Abdallah Ahmed. MIT licensed.'
@@ -14,15 +14,19 @@
     # Explicit exports only. A folder of dot-sourced scripts leaks every helper it
     # defines; a manifest makes the public surface a deliberate decision.
     #
-    # Invoke-TSApply is deliberately absent. apply is not implemented, and
-    # exporting a stub that looks implemented is worse than exporting nothing.
+    # Invoke-TSApply was withheld until 0.2.0, and the conditions for adding it
+    # were specific rather than a matter of confidence: a backup path, an
+    # append-only journal, hash-based idempotence, and -WhatIf. A Set operation
+    # with none of those is a command that can change a machine and cannot say
+    # what it changed, which is the defect that motivated this project.
     #
-    # Get-TSControl is a read. The configurator surfaces render what it returns
-    # and print the edited document to stdout; nothing here writes desired state,
-    # for the same reason apply does not exist yet.
+    # It still does not install packages, fonts, or modules. That boundary is
+    # documented in the function itself and reported in its output, rather than
+    # being left for a user to discover.
     FunctionsToExport = @(
         'Get-TSControl'
         'Get-TSPlan'
+        'Invoke-TSApply'
         'Invoke-TSDoctor'
     )
 
@@ -35,7 +39,7 @@
             Tags         = @('Windows', 'Terminal', 'WindowsTerminal', 'DesiredState', 'Configuration')
             LicenseUri   = 'https://github.com/AbdallahxAhmed/terminal-studio/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/AbdallahxAhmed/terminal-studio'
-            ReleaseNotes = 'Pre-alpha. Read-only commands only: doctor, plan, and configure. No apply yet.'
+            ReleaseNotes = 'Adds apply for file resources, with backups, an append-only journal, and -WhatIf. Packages, fonts, and modules are reported but not installed.'
         }
     }
 }
