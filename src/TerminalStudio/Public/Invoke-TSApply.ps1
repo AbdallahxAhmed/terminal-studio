@@ -29,6 +29,9 @@ function Invoke-TSApply {
         prevent. A command that is honest about its edges is more useful than one
         that is quietly broader than its guarantees.
 
+        terminal.global is different again. It is not waiting for an adapter; it
+        is refused. See ADR-0006.
+
         SAFETY PROPERTIES
 
           - Nothing is written when the source and destination already match, so
@@ -38,6 +41,15 @@ function Invoke-TSApply {
           - Every change appends one JSON line to an append-only journal, which is
             what will make uninstall a replay rather than a second guess.
           - -WhatIf reports every intended change without making any of them.
+
+        A NOTE FOR CALLERS ABOUT -WhatIf
+
+        Pass it. Do not set $WhatIfPreference in your own scope and expect this
+        function to observe it. This function is exported from a module, so its
+        scope chain is rooted in the module's session state rather than in yours,
+        and preference variables do not cross that boundary. The entry script
+        learned this the expensive way: it printed a report headed 'dry run,
+        nothing written' over a shell profile it had just replaced.
 
     .PARAMETER DesiredStatePath
         Path to the desired-state document.
@@ -80,6 +92,14 @@ function Invoke-TSApply {
         [string] $BackupRoot
     )
 
+    # Both defaults are built by walking up from $PSScriptRoot, which leaves a
+    # literal '..\..\..' in the middle of every path derived from them. That is
+    # invisible until a resource fails and the user is asked to act on a path with
+    # three parent references buried in it. Collapse them once, here, rather than
+    # in each message.
+    $DesiredStatePath = Expand-TSPath -Path $DesiredStatePath
+    $PayloadRoot = Expand-TSPath -Path $PayloadRoot
+
     # Deliberately not wrapped in a try. An unreadable desired-state document is a
     # reason to refuse to act, not a result to report: doctor may carry on with a
     # partial picture because it only reads, but apply writing a subset of a
@@ -104,10 +124,18 @@ function Invoke-TSApply {
 
     $results = [System.Collections.Generic.List[object]]::new()
 
+    # WhatIf travels in the splat rather than being left to scope inheritance.
+    # Sync-TSManagedFile lives in the same module, so it would in fact inherit
+    # $WhatIfPreference from this scope - but the defect that made this file worth
+    # revisiting was precisely a boundary where that assumption silently stopped
+    # holding. Making it a parameter means there is no boundary left to reason
+    # about: every call site that copies this splat gets the behaviour, and a call
+    # site that forgets it is a visible omission rather than an invisible one.
     $shared = @{
         BackupRoot  = $BackupRoot
         JournalPath = $JournalPath
         RunId       = $runId
+        WhatIf      = [bool] $WhatIfPreference
     }
 
     foreach ($resource in @($state.resources)) {
@@ -207,6 +235,19 @@ function Invoke-TSApply {
                 else {
                     $results.Add((New-TSResult -Name "Module: $($resource.name)" -Status 'Skip' -Expected 'available' -Actual 'absent; apply does not install modules' -Remediation "Install-PSResource -Name $($resource.name) -Scope CurrentUser"))
                 }
+            }
+
+            'terminal.global' {
+                # Its own branch, not the default one, because the two mean
+                # different things and the report has to distinguish them. 'not
+                # modelled' promises that support is coming; this is a decision.
+                #
+                # settings.json belongs to the user. Windows Terminal rewrites the
+                # whole file whenever anything is changed in its settings UI, and a
+                # second writer would eventually clobber an edit made by hand with
+                # no way to say which edit was lost. Fragments exist so that a tool
+                # never has to touch that file, and this project uses them.
+                $results.Add((New-TSResult -Name 'Terminal global settings' -Status 'Skip' -Expected 'declared intent, applied by hand' -Actual 'apply does not write settings.json, by decision' -Remediation 'Set these in Windows Terminal Settings yourself. docs/adr/0006-apply-converges-files-only.md records why this one is refused rather than deferred.'))
             }
 
             default {
