@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStudio.psm1'
-    ModuleVersion     = '0.1.0'
+    ModuleVersion     = '0.1.1'
     GUID              = 'f3b1c2d4-5e6a-4b8c-9d0e-1a2b3c4d5e6f'
     Author            = 'Abdallah Ahmed'
     Copyright         = '(c) 2026 Abdallah Ahmed. MIT licensed.'
