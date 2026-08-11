@@ -110,6 +110,11 @@ Import-Module -Name $modulePath -Force
 # module's public surface is data only, and presentation is this script's problem.
 # That is what makes '-Json' and a rendered report equal-status clients of the same
 # function, instead of one being grafted onto the other after the fact.
+#
+# Note the consequence, which cost this project a wrongly-headed report: because
+# these are dot-sourced they run in this scope and see this scope's preference
+# variables, while the module functions above do not. The two halves of an apply
+# run therefore do not agree about -WhatIf unless it is passed explicitly.
 $uiDirectory = Join-Path -Path $PSScriptRoot -ChildPath 'src\TerminalStudio\UI'
 foreach ($file in Get-ChildItem -Path $uiDirectory -Filter '*.ps1' -File) {
     . $file.FullName
@@ -208,11 +213,27 @@ switch ($Command) {
         $journalPath = Join-Path -Path $localAppData -ChildPath 'TerminalStudio\journal.jsonl'
         $backupRoot = Join-Path -Path $localAppData -ChildPath 'TerminalStudio\backups'
 
-        # No -WhatIf argument is passed. SupportsShouldProcess on this script means
-        # PowerShell has already set $WhatIfPreference for the whole call stack, and
-        # the check happens at the write itself rather than being re-decided by each
-        # layer on the way down.
-        $results = @(Invoke-TSApply @common)
+        # -WhatIf is passed explicitly, and it has to be.
+        #
+        # An earlier version of this line did not pass it, on the stated reasoning
+        # that SupportsShouldProcess on this script had already set
+        # $WhatIfPreference for the whole call stack. That reasoning is wrong.
+        # Preference variables resolve through the scope chain, and a function
+        # exported from a module has its chain rooted in the module's own session
+        # state rather than in its caller's. $WhatIfPreference set here is simply
+        # not visible inside Invoke-TSApply.
+        #
+        # The renderer below is dot-sourced into this scope, so it did see the
+        # preference. The observable result was a report headed 'dry run, nothing
+        # written' printed directly above a list of files that had just been
+        # written, including a replaced shell profile. A dry run that writes is the
+        # worst defect this project can ship, because every other safety property
+        # here is something the user is invited to verify with -WhatIf first.
+        #
+        # The general rule, which applies to $ErrorActionPreference and
+        # $VerbosePreference identically: never infer a preference across a module
+        # boundary. Pass it.
+        $results = @(Invoke-TSApply @common -WhatIf:$WhatIfPreference)
 
         if ($Json) {
             $results | ConvertTo-Json -Depth 4
