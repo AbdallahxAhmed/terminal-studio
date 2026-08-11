@@ -28,7 +28,7 @@ Describe 'module surface' {
 
     It 'exports exactly the commands it claims' {
         @(Get-Command -Module 'TerminalStudio' | ForEach-Object { $_.Name } | Sort-Object) |
-            Should -Be @('Get-TSControl', 'Get-TSPlan', 'Invoke-TSDoctor')
+            Should -Be @('Get-TSControl', 'Get-TSPlan', 'Invoke-TSApply', 'Invoke-TSDoctor')
     }
 
     It 'keeps renderers out of the public surface' {
@@ -39,13 +39,18 @@ Describe 'module surface' {
             Should -BeNullOrEmpty
     }
 
-    It 'ships no apply command at all' {
-        # Asserted, because the tempting alternative is worse than nothing. An empty
-        # Invoke-TSApply that returns successfully would tell every caller - including
-        # a future test - that the machine had converged, when nothing had happened.
-        # Absent and documented beats present and dishonest.
-        Get-Command -Module 'TerminalStudio' -Name 'Invoke-TSApply' -ErrorAction SilentlyContinue |
-            Should -BeNullOrEmpty
+    It 'will not let apply run without a way to preview it' {
+        # This test replaces one asserting that no apply command existed at all,
+        # which was the right guard while the safety machinery was still missing.
+        # The concern it encoded has not gone away, it has moved: the danger is no
+        # longer a command that claims to converge and does nothing, it is a command
+        # that changes a machine with no way to ask what it would change first.
+        #
+        # SupportsShouldProcess is what makes -WhatIf real rather than a parameter
+        # each layer has to remember to honour. The predecessor accepted -DryRun on
+        # several functions and ignored it, because the actual behaviour travelled
+        # through a global.
+        (Get-Command -Name 'Invoke-TSApply').Parameters.Keys | Should -Contain 'WhatIf'
     }
 }
 
