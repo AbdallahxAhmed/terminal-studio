@@ -22,7 +22,7 @@ is the only cure.
 *string*, not an argument list, so there is no channel through which `-Version` could arrive.
 PowerShell's response is to prompt — mid-paste, from a script the user cannot see.
 
-**Fixed** in 0.1.1. If you still see it, you are reading a cached copy; the current script resolves
+**Fixed** in 0.2.0. If you still see it, you are reading a cached copy; the current script resolves
 its version from `bootstrap/releases.json`. See [ADR-0005](adr/0005-argument-free-install-via-release-manifest.md).
 
 ### `Invoke-WebRequest: Not Found`
@@ -45,7 +45,7 @@ what forgetting the first one looks like.
 **Cause:** an `exit` on a failure path. Under `Invoke-Expression` there is no script scope to exit
 from, so `exit 1` terminates the *host session*, taking the error message with it.
 
-**Fixed** in 0.1.1. Stage 0 calls `exit` nowhere; every failure throws, and a compatibility test
+**Fixed** in 0.2.0. Stage 0 calls `exit` nowhere; every failure throws, and a compatibility test
 asserts it.
 
 ---
@@ -56,7 +56,7 @@ asserts it.
 
 ```
 ./tools/New-TSRelease.ps1: The term './tools/New-TSRelease.ps1' is not recognized as a name of a
-cmdlet, function, script file, or executable program.
+cmdlet, script file, or executable program.
 ```
 
 **Cause:** relative paths resolve against the current directory, and you are not in the repository.
@@ -89,6 +89,23 @@ block meant to be run.
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
+### `Pester 5.5.0 or later is required`
+
+```
+Exception: ...\tests\Invoke-Tests.ps1:51
+Line |  51 |      throw 'Pester 5.5.0 or later is required. Install-Module -Name Pe …
+```
+
+**Cause, and this is not a bug:** the test runner refuses to run rather than silently using the
+Pester 3 that ships with Windows. Pester 5 changed the test syntax, and Pester 3 does not fail on
+version 5 files — it discovers nothing and reports success.
+
+**Fix:**
+
+```powershell
+Install-Module -Name Pester -MinimumVersion 5.5.0 -Scope CurrentUser -SkipPublisherCheck -Force
+```
+
 ---
 
 ## Fonts
@@ -113,9 +130,14 @@ The string `CaskaydiaCove Nerd Font Mono` appears in none of them. It is name ID
 family name; the registry and GDI both store name ID 1, the four-style-limited family name. Windows
 Terminal displays the typographic name, which is why the settings UI and the registry disagree.
 
-**Fixed** in 0.1.1. Detection expands the requested name into its abbreviated aliases (`NF`, `NFM`,
+**Fixed** in 0.2.0. Detection expands the requested name into its abbreviated aliases (`NF`, `NFM`,
 `NFP`) and tries three interfaces in order: font enumeration, the registry, then `GlyphTypeface`
-inspection — the only route reachable from PowerShell that reports the verbose name.
+inspection — the only route reachable from PowerShell that reports the verbose name. A fixed build
+reports the name it actually matched:
+
+```
+DONE   Font: CaskaydiaCove Nerd Font Mono  (installed as 'CaskaydiaCove NFM', found by font enumeration)
+```
 
 **If you are running v0.1.0**, this failure is frozen into that archive. Install a newer release.
 
@@ -150,7 +172,7 @@ three are usually installed together. A terminal needs the **NFM** (Mono) cut.
 Look for this in the report:
 
 ```
-WARN   Fragment effect: andalus  (settings.json overrides and wins: colorScheme, font, opacity)
+WARN   Fragment effect: andalus  (settings.json overrides and wins: colorScheme, font)
 ```
 
 **Cause, and this is not a bug:** Windows Terminal composes each profile from three layers, in order:
@@ -161,6 +183,10 @@ profile defaults  ->  installed fragments  ->  your settings.json
 
 The last layer to mention a property wins. A fragment setting `colorScheme` on a profile whose
 `settings.json` entry already sets `colorScheme` is installed, correct, and completely invisible.
+
+Note that `font` is a single object in the Windows Terminal schema. One override named `font` covers
+the face, the size, the line height and the cell width together, so a report naming two overrides
+can correspond to five values you set in the UI.
 
 **Fix:** open Settings, select the profile, and click the reset arrow (`↺`) beside each overridden
 property. That arrow only appears next to values you have set explicitly, so it is also the fastest
@@ -195,6 +221,61 @@ it found. If you have both channels installed, confirm you are looking at the on
 
 ## `apply`
 
+### `-WhatIf` said nothing would be written, and wrote three files
+
+```
+  Terminal Studio apply  (dry run, nothing written)
+  -------------------------------------------------
+  DONE   Fragment: andalus  (created ...\Fragments\TerminalStudio\andalus.json)
+  DONE   Prompt theme: andalus  (created ...\.poshthemes\andalus.omp.json)
+  DONE   Shell profile  (replaced; previous version kept at ...\backups\20260811-085743-Microsoft.PowerShell_profile.ps1)
+```
+
+**How to recognise it:** the header claims a dry run and the lines underneath say `created` and
+`replaced`. A genuine dry run marks every file `SKIP` and says `would create` and `would replace`,
+and it prints no journal or backup paths in the footer. If you see `DONE` next to a file during a
+dry run, the file was written.
+
+**Cause:** `$WhatIfPreference` does not cross a module boundary. A function exported from a module
+resolves preference variables through the module's session state rather than the caller's, so
+`SupportsShouldProcess` on `ts.ps1` set a value that `Invoke-TSApply` could not see. The report
+renderers are dot-sourced into the script's own scope and *did* see it — which is why the heading was
+right while the engine was wrong. The two halves of one run disagreed, and only the printed half was
+telling the truth.
+
+**Fixed** on `main`, above the v0.1.0 tag. `-WhatIf` is now passed as an explicit argument, and
+`tests/unit/Apply.Tests.ps1` parses `ts.ps1` and asserts the call site still passes it.
+
+**If this already happened to you**, nothing is lost. Every replaced file was backed up before it was
+overwritten and every change was journaled. Start by reading what was done:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\TerminalStudio\journal.jsonl" |
+    ConvertFrom-Json |
+    Format-Table timestamp, action, kind, destination, backup
+```
+
+To put your previous shell profile back:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\TerminalStudio\backups\*-Microsoft.PowerShell_profile.ps1" |
+    Sort-Object LastWriteTime |
+    Select-Object -Last 1 |
+    Copy-Item -Destination $PROFILE.CurrentUserCurrentHost -Force
+```
+
+A replaced profile takes effect in the next tab you open, not in the session you are typing into, so
+a wrong profile is never as urgent as it looks.
+
+The fragment and the theme were created rather than replaced, so there is no backup to restore and
+nothing was destroyed. They are also both files `apply` is meant to write. Remove them only if you
+want a clean slate before testing again:
+
+```powershell
+Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows Terminal\Fragments\TerminalStudio\andalus.json",
+            "$HOME\.poshthemes\andalus.omp.json" -Force -ErrorAction SilentlyContinue
+```
+
 ### `source file is missing`
 
 ```
@@ -219,6 +300,13 @@ it changed and the declaration was not updated. Recompute and update `desired-st
 ```powershell
 (Get-FileHash -LiteralPath 'desired-state\assets\andalus-backdrop.png' -Algorithm SHA256).Hash
 ```
+
+### `Resource kind: terminal.global` is skipped
+
+**This is a decision, not a gap.** `apply` does not write `settings.json`. It is a large hand-edited
+file with comments, and a converger that rewrites it can destroy work no backup was asked to protect.
+The `terminal.global` resource records intent so `doctor` can report drift against it; the change is
+yours to make in the Settings UI. See [ADR-0006](adr/0006-apply-converges-files-only.md).
 
 ### Undoing what `apply` did
 
