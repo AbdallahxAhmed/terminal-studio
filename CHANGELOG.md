@@ -17,6 +17,10 @@ Nothing yet.
 The release that makes the project do what it was named for. A version numbered 0.1.1 was prepared
 earlier the same day and never published; its contents ship here.
 
+A defect in this section's headline feature — `apply -WhatIf` writing files — was found on `main`
+and fixed before the tag was cut. It is recorded below rather than quietly dropped, because a
+changelog that only lists defects unlucky enough to reach a user is a marketing document.
+
 ### Added
 
 - **`ts apply`.** Converges the four file resource kinds — Windows Terminal fragment, backdrop asset,
@@ -28,9 +32,12 @@ earlier the same day and never published; its contents ship here.
   is appended when a file already matches, so it records changes rather than invocations. This is the
   primitive that will make uninstall a replay rather than a hand-maintained mirror of the installer.
 - **Backups.** Every replaced file is copied to `%LOCALAPPDATA%\TerminalStudio\backups` before it is
-  overwritten, and the path appears in both the report and the journal.
-- **`-WhatIf` on `apply`**, enforced at the write itself rather than re-decided by each layer above
-  it. `tests/unit/Apply.Tests.ps1` asserts that a dry run creates no file and writes no journal line.
+  overwritten, and the path appears in both the report and the journal. This was the difference
+  between an incident and a recoverable one the first time `apply` misbehaved.
+- **`-WhatIf` on `apply`.** The decision is made at the write itself, in `Sync-TSManagedFile`, and the
+  preference is passed explicitly through every layer that reaches it. `tests/unit/Apply.Tests.ps1`
+  asserts that a dry run creates no file and writes no journal line, and separately that the entry
+  script's call site passes the argument.
 - **Fragment effectiveness detection.** Windows Terminal layers defaults, then fragments, then the
   user's `settings.json`, and the last layer to mention a property wins. A fragment deployed onto a
   profile whose `settings.json` already sets the same properties is installed, correct, and
@@ -76,15 +83,41 @@ earlier the same day and never published; its contents ship here.
   during an install. A numeric comparison against `$PSVersionTable` behaves identically in both
   execution modes.
 - Stage 0 runs `doctor` on completion unless told not to.
-- `ts.ps1` declares `SupportsShouldProcess`, so `-WhatIf` propagates down the call stack instead of
-  being a parameter each layer has to remember to honour.
+- `ts.ps1` declares `SupportsShouldProcess` and **passes `-WhatIf` explicitly** to the module
+  functions it calls. An earlier revision declared the attribute and relied on the preference
+  reaching them on its own; see Fixed.
 - `apply` exits `2` when anything is left undone, including the resources it delegates. Exiting `0`
   while the report immediately above lists four uninstalled packages would put the exit code in
   direct contradiction with its own output.
+- `terminal.global` is reported as refused by decision rather than as `not modelled`. The two are
+  different claims — one says support is coming — and ADR-0006 makes the distinction, so the report
+  has to as well.
+- `Expand-TSPath` collapses relative segments in rooted paths, so messages built from `$PSScriptRoot`
+  no longer print `Public\..\..\..` in the middle of a path the user is being asked to act on.
 - Unmodelled-kind messages no longer name a specific version, so they cannot go stale in place.
 
 ### Fixed
 
+- **`apply -WhatIf` wrote files.** A dry run created a Windows Terminal fragment, created an Oh My
+  Posh theme, and replaced a shell profile, under a report headed `dry run, nothing written`.
+
+  `$WhatIfPreference` does not cross a module boundary. A function exported from a module resolves
+  preference variables through the module's session state, not the caller's, so the value set by
+  `SupportsShouldProcess` on `ts.ps1` was never visible inside `Invoke-TSApply`. The renderers are
+  dot-sourced into the script's own scope and therefore *did* see it — which is precisely why the
+  header was correct while the engine was not, and why the output was actively misleading rather
+  than merely wrong.
+
+  `-WhatIf` is now passed explicitly at the call site and again in the splat that reaches every
+  write. The backups and the journal, which were designed for a different failure, are what made the
+  affected machine recoverable.
+
+  Every unit test passed throughout. They called `Invoke-TSApply -WhatIf` directly, which always
+  worked; the defect lived in the join between the entry script and the module, and nothing tested
+  joins. Two tests now do: one parses `ts.ps1` and asserts the call site passes the argument, using
+  the AST rather than a text search because the file now contains a comment about passing `-WhatIf`
+  that a regex would match while the call site was broken. The other pins the platform behaviour
+  itself, so the explicit argument cannot be deleted as redundant without a test going red.
 - **An installed font was reported as missing.** `CaskaydiaCove Nerd Font Mono` is registered and in
   daily use on the author's machine, and doctor said it was absent. Nerd Fonts registers abbreviated
   families — `CaskaydiaCove NF`, `NFM`, `NFP` — plus filename-shaped values such as
