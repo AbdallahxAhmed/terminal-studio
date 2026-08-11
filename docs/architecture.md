@@ -56,12 +56,17 @@ So the entry point is split, and the split is load-bearing:
 
 | Stage | Constraint | Responsibility |
 | --- | --- | --- |
-| 0 — `bootstrap/get.ps1` | `#Requires -Version 5.1`, no 7-only syntax, ~50 lines | verify OS, verify winget, install PowerShell 7, verify artifact integrity, hand off |
+| 0 — `bootstrap/get.ps1` | 5.1-safe, no 7-only syntax, ~50 lines | verify the engine, resolve the release, verify artifact integrity, unpack, hand off |
 | 1 — `src/TerminalStudio` | `#Requires -Version 7.4` | everything else, free to use modern syntax |
 
 Stage 0 is kept short for a second reason: it is the file a user is asked to execute from a URL.
 Fifty readable lines can actually be audited in thirty seconds. Four hundred cannot, and a
 bootstrap nobody can audit makes the convenience one-liner indefensible.
+
+Stage 0 carries no `#Requires` directive and calls `exit` nowhere, because it is executed as a
+*string* through `Invoke-Expression` rather than as a file. Both of those are consequences of the
+delivery mechanism rather than style choices — see
+[ADR-0005](adr/0005-argument-free-install-via-release-manifest.md).
 
 `tests/compat/` runs under both engines and fails if stage 0 drifts out of 5.1 compatibility.
 
@@ -81,10 +86,29 @@ the engine.
 over whatever `Test` reported as differing. Building `Test` first is why `doctor` comes before
 `apply`: it is genuinely half of every future resource, and it ships value while being harmless.
 
+All three answer the file-comparison question with the same arithmetic — a SHA-256 of the managed
+copy against the deployed one. Three implementations of one idea is how `plan` and `apply` end up
+disagreeing about the same machine.
+
+`Set` is implemented for the four resource kinds that are a file arriving at a known path. Packages,
+fonts, modules, and global terminal settings are reported and delegated, for reasons recorded in
+[ADR-0006](adr/0006-apply-converges-files-only.md).
+
 ## Change journal
 
-Every `apply` appends a record of what changed, including the previous value, to an append-only
-journal. This is the primitive that makes uninstall mechanical rather than guessed.
+Every `apply` appends a record of what changed, including the previous hash and the path of the
+backed-up file, to an append-only journal at `%LOCALAPPDATA%\TerminalStudio\journal.jsonl`. This is
+the primitive that makes uninstall mechanical rather than guessed.
+
+```json
+{"timestamp":"...","runId":"...","action":"replace","kind":"terminal.fragment",
+ "name":"...","source":"...","destination":"...",
+ "previousSha256":"...","newSha256":"...","backup":"..."}
+```
+
+`runId` is shared by every change in one run, so a run can be reversed as a unit rather than file by
+file. Nothing is appended when a file already matches, which keeps the journal a record of *changes*
+rather than of invocations.
 
 The predecessor maintained four hand-written uninstall scopes mirroring the installer, and they
 drifted immediately: modules it installed were never removed, the stable Windows Terminal it removed
@@ -92,7 +116,8 @@ was never restored, and timestamped backup files accumulated forever. None of th
 mistake. It is the inevitable result of representing the same knowledge in two places and hoping
 they stay in sync.
 
-With a journal there is only one place: uninstall replays the journal backwards.
+With a journal there is only one place: uninstall replays the journal backwards. That command is not
+built yet; the record it will read is.
 
 ## Observability
 
@@ -111,7 +136,29 @@ the machine name and username on every line.
 
 ## Current status against this document
 
-This document describes the target design. Implemented so far: the layering, the adapter seam, the
-capability checks in `doctor`, and drift reporting in `plan`. Not yet implemented: `apply`, the
-change journal, and JSONL log emission (`Write-TSLog` currently writes only to PowerShell streams).
-The gap is deliberate and tracked in the README roadmap rather than hidden behind stubs.
+This document describes the target design. Where the implementation has caught up:
+
+| Described | Status |
+| --- | --- |
+| Layering and the adapter seam | built, and enforced by `tests/unit/Architecture.Tests.ps1` |
+| Two-stage bootstrap | built, verified in production, cross-engine tests in `tests/compat/` |
+| `Get` — `doctor` | built, all eight resource kinds modelled |
+| `Test` — `plan` | built, agrees with `doctor` by construction |
+| `Set` — `apply` | built for the four file kinds; the rest delegated (ADR-0006) |
+| Change journal | built; written by `apply`, not yet read by anything |
+| `--json` on every command | built |
+| Exit codes as contract | built |
+
+Still unbuilt, and not stubbed:
+
+- **Journal-driven uninstall.** The record exists; the replay does not.
+- **JSONL diagnostic logging.** `Write-TSLog` still writes only to PowerShell streams. The change
+  journal is structured and on disk; the *diagnostic* log is not.
+- **Error classification** into retryable, fatal, and partial.
+- **Redacted diagnostic bundles.**
+- **Convergence of packages, fonts, modules, and global terminal settings.** Deliberate, with a
+  stated condition for adopting each one (ADR-0006).
+- **A save path for `configure`.** It exits `3` rather than pretending.
+
+The gap is tracked in the README roadmap rather than hidden behind stubs. A command that looks
+implemented and is not costs more than one that is absent.
