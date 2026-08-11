@@ -28,8 +28,18 @@ function Invoke-TSDoctor {
         could not look. Conflating them spends the credibility of every other
         result in the report.
 
+        Managed files are compared by content hash, not by existence. Existence is
+        the easier question and the wrong one - a fragment deployed before its
+        source was last edited exists, is stale, and passes an existence test
+        while the machine no longer matches what the repository says it should be.
+        The comparison here is the same one apply uses to decide whether to write,
+        which is what keeps the two from disagreeing.
+
     .PARAMETER DesiredStatePath
         Path to the desired-state document. Defaults to the copy in this repository.
+
+    .PARAMETER PayloadRoot
+        Root that resource source paths are relative to.
 
     .PARAMETER StartupBudgetMs
         Cold-start budget for a new shell, in milliseconds.
@@ -50,6 +60,8 @@ function Invoke-TSDoctor {
     [OutputType([pscustomobject])]
     param(
         [string] $DesiredStatePath = (Join-Path -Path $PSScriptRoot -ChildPath '..\..\..\desired-state\machine.json'),
+
+        [string] $PayloadRoot = (Join-Path -Path $PSScriptRoot -ChildPath '..\..\..'),
 
         [ValidateRange(100, 60000)]
         [int] $StartupBudgetMs = 1000,
@@ -103,7 +115,7 @@ function Invoke-TSDoctor {
         $results.Add((New-TSResult -Name 'Shell profile' -Status 'Pass' -Expected 'present' -Actual $profilePath))
     }
     else {
-        $results.Add((New-TSResult -Name 'Shell profile' -Status 'Warn' -Expected 'present' -Actual "missing: $profilePath" -Remediation 'Not yet deployed. This becomes a Fail once apply exists.'))
+        $results.Add((New-TSResult -Name 'Shell profile' -Status 'Fail' -Expected 'present' -Actual "missing: $profilePath" -Remediation 'Run: ts.ps1 apply'))
     }
 
     # ----------------------------------------------- Windows Terminal settings ---
@@ -133,7 +145,66 @@ function Invoke-TSDoctor {
         $results.Add((New-TSResult -Name 'Desired state' -Status 'Pass' -Expected 'schemaVersion 1' -Actual "$(@($state.resources).Count) resource(s) from $DesiredStatePath"))
 
         foreach ($resource in @($state.resources)) {
-            switch ([string] $resource.kind) {
+            $kind = [string] $resource.kind
+            $names = @($resource.PSObject.Properties.Name)
+
+            # Three kinds differ only in where the file lands, so they are checked
+            # once rather than three times. Handled before the switch because
+            # PowerShell has no way to give one branch several labels, and copying
+            # the comparison into three branches is how two of them eventually stop
+            # matching the third.
+            if ($kind -in @('terminal.asset', 'omp.theme', 'shell.profile')) {
+                $label = ''
+                $destination = ''
+
+                switch ($kind) {
+                    'terminal.asset' {
+                        $label = "Asset: $($resource.name)"
+                        if ($names -contains 'destination') { $destination = Expand-TSPath -Path $resource.destination }
+                    }
+                    'omp.theme' {
+                        $label = "Prompt theme: $($resource.name)"
+                        if ($names -contains 'destination') { $destination = Expand-TSPath -Path $resource.destination }
+                    }
+                    'shell.profile' {
+                        $label = 'Shell profile content'
+                        $destination = Get-TSProfilePath
+                    }
+                }
+
+                if (-not $destination) {
+                    $results.Add((New-TSResult -Name $label -Status 'Fail' -Expected 'a destination' -Actual 'resource declares no destination' -Remediation 'Add a destination property to this resource in desired state.'))
+                }
+                elseif ($names -notcontains 'source') {
+                    $results.Add((New-TSResult -Name $label -Status 'Fail' -Expected 'a source file' -Actual 'resource declares no source' -Remediation 'Add a source property to this resource in desired state.'))
+                }
+                else {
+                    $source = Join-Path -Path $PayloadRoot -ChildPath $resource.source
+
+                    if (-not (Test-TSPath -Path $source)) {
+                        $results.Add((New-TSResult -Name $label -Status 'Fail' -Expected $destination -Actual "the managed copy is not in the payload: $source" -Remediation 'This resource cannot be applied until that file exists. Binary assets are not committed to the repository and have to be placed by hand.'))
+                    }
+                    else {
+                        $sourceHash = Get-TSFileHashValue -Path $source
+                        $deployedHash = Get-TSFileHashValue -Path $destination
+
+                        if (-not $deployedHash) {
+                            $results.Add((New-TSResult -Name $label -Status 'Fail' -Expected $destination -Actual 'not deployed' -Remediation 'Run: ts.ps1 apply'))
+                        }
+                        elseif ($sourceHash -eq $deployedHash) {
+                            $results.Add((New-TSResult -Name $label -Status 'Pass' -Expected $destination -Actual 'matches the managed copy'))
+                        }
+                        else {
+                            # Drift, which an existence check cannot see at all.
+                            $results.Add((New-TSResult -Name $label -Status 'Fail' -Expected $destination -Actual 'deployed, but the contents differ from the managed copy' -Remediation 'Run: ts.ps1 apply   The current file is backed up before it is replaced.'))
+                        }
+                    }
+                }
+
+                continue
+            }
+
+            switch ($kind) {
                 'font' {
                     $font = Get-TSFontState -FamilyName $resource.family
 
@@ -178,18 +249,65 @@ function Invoke-TSDoctor {
 
                 'terminal.fragment' {
                     $fragment = Get-TSTerminalFragmentPath -AppName $resource.appName -FragmentName $resource.name
+                    $source = if ($names -contains 'source') { Join-Path -Path $PayloadRoot -ChildPath $resource.source } else { '' }
 
-                    if (Test-TSPath -Path $fragment) {
-                        $results.Add((New-TSResult -Name "Terminal fragment: $($resource.name)" -Status 'Pass' -Expected 'installed' -Actual $fragment))
+                    if (-not (Test-TSPath -Path $fragment)) {
+                        $results.Add((New-TSResult -Name "Terminal fragment: $($resource.name)" -Status 'Fail' -Expected 'installed' -Actual "missing: $fragment" -Remediation 'Run: ts.ps1 apply'))
+                    }
+                    elseif ($source -and (Test-TSPath -Path $source) -and (Get-TSFileHashValue -Path $source) -ne (Get-TSFileHashValue -Path $fragment)) {
+                        $results.Add((New-TSResult -Name "Terminal fragment: $($resource.name)" -Status 'Fail' -Expected 'matches the managed copy' -Actual 'deployed, but out of date' -Remediation 'Run: ts.ps1 apply   The current file is backed up before it is replaced.'))
                     }
                     else {
-                        $results.Add((New-TSResult -Name "Terminal fragment: $($resource.name)" -Status 'Fail' -Expected 'installed' -Actual "missing: $fragment" -Remediation 'Not yet deployed. This is what apply will write.'))
+                        $results.Add((New-TSResult -Name "Terminal fragment: $($resource.name)" -Status 'Pass' -Expected 'installed' -Actual $fragment))
+                    }
+
+                    # A separate question from whether the file is there, and the one
+                    # the user actually cares about. Windows Terminal applies user
+                    # settings after fragments, so a correctly deployed fragment can
+                    # be entirely invisible.
+                    if ($source) {
+                        $results.Add((Get-TSFragmentEffect -FragmentSourcePath $source -Label "Fragment effect: $($resource.name)"))
+                    }
+                }
+
+                'terminal.global' {
+                    if (-not $settingsPath) {
+                        $results.Add((New-TSResult -Name 'Terminal global settings' -Status 'Skip' -Expected 'defaultProfile and theme as declared' -Actual 'no settings file found' -Remediation 'Unverified rather than healthy.'))
+                    }
+                    elseif (-not (Test-TSTerminalSettingsParse -Path $settingsPath)) {
+                        $results.Add((New-TSResult -Name 'Terminal global settings' -Status 'Skip' -Expected 'defaultProfile and theme as declared' -Actual 'settings file will not parse' -Remediation 'Already reported above. Fix that first.'))
+                    }
+                    else {
+                        $settings = Get-TSFileText -Path $settingsPath | ConvertFrom-Json
+                        $settingsNames = @($settings.PSObject.Properties.Name)
+                        $mismatch = [System.Collections.Generic.List[string]]::new()
+
+                        foreach ($property in @('defaultProfile', 'theme')) {
+                            if ($names -notcontains $property) { continue }
+
+                            $wanted = [string] $resource.$property
+                            $observed = if ($settingsNames -contains $property) { [string] $settings.$property } else { '(unset)' }
+
+                            if ($observed -ne $wanted) {
+                                $mismatch.Add("$property is $observed, desired $wanted")
+                            }
+                        }
+
+                        if ($mismatch.Count -eq 0) {
+                            $results.Add((New-TSResult -Name 'Terminal global settings' -Status 'Pass' -Expected 'defaultProfile and theme as declared' -Actual 'settings.json agrees'))
+                        }
+                        else {
+                            # Deliberately not offered as something apply will fix. apply
+                            # does not write settings.json, and a remediation naming a
+                            # command that will not do the job is worse than none.
+                            $results.Add((New-TSResult -Name 'Terminal global settings' -Status 'Warn' -Expected 'defaultProfile and theme as declared' -Actual (@($mismatch) -join '; ') -Remediation 'These live in your own settings.json, which apply does not modify. Change them in Windows Terminal settings, or drop them from desired state.'))
+                        }
                     }
                 }
 
                 default {
                     # Deliberately reported rather than ignored. See Get-TSPlan.
-                    $results.Add((New-TSResult -Name "Resource kind: $($resource.kind)" -Status 'Skip' -Expected 'a kind this build understands' -Actual 'not modelled in 0.1.0' -Remediation 'No check exists yet. Treat as unverified rather than healthy.'))
+                    $results.Add((New-TSResult -Name "Resource kind: $kind" -Status 'Skip' -Expected 'a kind this build understands' -Actual 'not modelled in this build' -Remediation 'No check exists yet. Treat as unverified rather than healthy.'))
                 }
             }
         }
