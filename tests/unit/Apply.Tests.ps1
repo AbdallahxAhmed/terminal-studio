@@ -16,6 +16,7 @@
 BeforeAll {
     $script:repoRoot = Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent
     $script:manifestPath = Join-Path -Path $script:repoRoot -ChildPath 'src/TerminalStudio/TerminalStudio.psd1'
+    $script:entryScriptPath = Join-Path -Path $script:repoRoot -ChildPath 'ts.ps1'
 
     Import-Module -Name $script:manifestPath -Force
 
@@ -211,5 +212,80 @@ Describe 'Invoke-TSApply' {
         Set-Content -LiteralPath $path -Value '{ "schemaVersion": 99, "resources": [] }' -Encoding utf8
 
         { Invoke-TSApply -DesiredStatePath $path } | Should -Throw
+    }
+}
+
+Describe 'the wiring between the entry script and apply' {
+
+    <#
+        Every test in the Describe above passed while 'ts.ps1 apply -WhatIf'
+        created two files and replaced a shell profile on a real machine.
+
+        Nothing was wrong with Invoke-TSApply. The entry script did not pass
+        -WhatIf to it, on the belief that SupportsShouldProcess on the script had
+        already set $WhatIfPreference for everything it called. That belief is
+        wrong across a module boundary, and the renderers - which are dot-sourced
+        into the script's own scope and therefore did see the preference - printed
+        'dry run, nothing written' over the list of files that had just been
+        written.
+
+        The lesson is not about -WhatIf. It is that a suite which tests each unit
+        in isolation tests none of the joins between them, and the join is where a
+        false assumption about the platform can live indefinitely without ever
+        failing a test.
+    #>
+
+    It 'passes -WhatIf explicitly, because the preference does not cross into the module' {
+        # Parsed, not pattern-matched. ts.ps1 now carries a long comment explaining
+        # why -WhatIf is passed explicitly, so a text search for '-WhatIf' finds the
+        # explanation whether or not the call site still does it - a check that
+        # passes for a reason unrelated to the thing it is checking. The AST sees
+        # command invocations and does not see comments at all.
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:entryScriptPath, [ref] $tokens, [ref] $errors)
+
+        @($errors).Count | Should -Be 0
+
+        $calls = @($ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Invoke-TSApply'
+                }, $true))
+
+        $calls.Count | Should -BeGreaterThan 0
+
+        foreach ($call in $calls) {
+            $parameters = @(
+                $call.CommandElements |
+                    Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] } |
+                    ForEach-Object { $_.ParameterName }
+            )
+
+            $parameters | Should -Contain 'WhatIf'
+        }
+    }
+
+    It 'does not honour a caller-scope $WhatIfPreference, which is why the argument is required' {
+        # A characterisation test. It asserts the platform behaviour that caused the
+        # defect rather than behaviour this project wants, so that the explicit
+        # argument above can never be deleted as redundant without something going
+        # red first.
+        #
+        # If a future PowerShell makes preference variables cross module boundaries,
+        # this test fails. That is the correct outcome: the workaround would then be
+        # unnecessary and the comments explaining it would be wrong.
+        $root = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('n'))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+        $destination = Join-Path -Path $root -ChildPath 'deployed/andalus.omp.json'
+        $payload = New-TSTestPayload -Root $root -SourceContent 'theme-v1' -Destination $destination
+
+        $WhatIfPreference = $true
+
+        $results = @(Invoke-TSApply -DesiredStatePath $payload.StatePath -PayloadRoot $payload.PayloadRoot -JournalPath $payload.JournalPath -BackupRoot $payload.BackupRoot)
+
+        $results[0].Status | Should -Be 'Pass'
+        Test-Path -LiteralPath $destination | Should -BeTrue
     }
 }
