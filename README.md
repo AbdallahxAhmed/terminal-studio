@@ -5,10 +5,15 @@
 This is a configuration-management problem with a fleet size of one. It is *not* an installer
 problem. That distinction drives every decision in this repository.
 
-> **Status: pre-alpha.** `doctor` is being built first, on purpose. `apply` does not exist yet and
-> is not stubbed out to pretend otherwise. See [Roadmap](#roadmap).
+> **Status: alpha.** All four verbs are implemented. `apply` converges the file resources — terminal
+> fragment, prompt theme, backdrop, shell profile — with backups, an append-only journal, and
+> `-WhatIf`. It deliberately does **not** install packages, fonts, or modules; it reports them with
+> the command that would. See [ADR-0006](docs/adr/0006-apply-converges-files-only.md).
 >
-> **CI is currently red.** The workflow fails at startup: `matrix` is referenced from
+> **0.2.0 is on `main` and not yet published.** The install one-liner currently serves **v0.1.0**,
+> which predates `apply` and carries a font-detection bug. Cut a release to move it.
+>
+> **CI is red.** The workflow fails at startup: `matrix` is referenced from
 > `jobs.<id>.steps[*].shell`, which is not one of the contexts available there. The fix is to move
 > it to `jobs.<id>.defaults.run.shell`, where `matrix` *is* available.
 
@@ -29,14 +34,17 @@ verbs:
 | `ts doctor` | none | Is this machine capable and healthy? What is drifting? |
 | `ts plan` | none | What exactly would change, and from what to what? |
 | `ts configure` | none yet | What can I turn on or off, and what is currently set? |
-| `ts apply` | yes | Make the machine match the desired state. |
+| `ts apply` | **yes** | Make the machine match the desired state. |
 
-Three properties fall out of this for free, none of which an imperative installer can offer:
+Three properties fall out of this, none of which an imperative installer can offer:
 
-- **Idempotence.** `apply` twice equals `apply` once. That is a testable assertion, not a hope.
-- **Reversibility.** Rolling back is `git checkout <tag> && ts apply`. There is no separate
-  uninstaller to keep in sync.
-- **Auditability.** Every change is a diff in a versioned file, reviewable before it runs.
+- **Idempotence.** `apply` twice equals `apply` once. Source and destination are compared by SHA-256
+  before anything is written, and `tests/unit/Apply.Tests.ps1` asserts that a second run appends
+  nothing to the journal.
+- **Reversibility.** Every replaced file is backed up and every change is journaled with its previous
+  hash. There is no separate uninstaller to keep in sync.
+- **Auditability.** Every change is a diff in a versioned file, reviewable before it runs, and
+  `apply -WhatIf` shows exactly what would happen without doing it.
 
 ## What this deliberately does not build
 
@@ -57,8 +65,13 @@ comments that a naive parse-and-reserialize destroys, and its path is tied to wh
 officially supported.
 
 Fragments cannot express *global* settings such as `defaultProfile`, window `theme`, or keybindings.
-Those remain a small, schema-validated, journaled merge, deliberately scoped to the ~10% that
-fragments genuinely cannot cover.
+`doctor` and `plan` report drift in those; nothing writes them.
+
+There is a catch worth knowing before you file a bug. Windows Terminal layers **defaults, then
+fragments, then your `settings.json`**, and the last layer to mention a property wins. A fragment
+setting `colorScheme` on a profile whose `settings.json` entry already sets `colorScheme` is
+installed, correct, and completely invisible. `doctor` and `apply` both detect this and report it as
+`applied but overridden` rather than green.
 
 ## Repository layout
 
@@ -96,6 +109,15 @@ Two architectural rules, both **enforced by tests** rather than by good intentio
 
 An architecture rule that is not enforced by a test is a comment.
 `tests/unit/Architecture.Tests.ps1` asserts both rules mechanically.
+
+## Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [Usage](docs/usage.md) | every command, exit codes, the change journal, undoing a change |
+| [Troubleshooting](docs/troubleshooting.md) | real failures with their verbatim error text |
+| [Architecture](docs/architecture.md) | the layers, the two-stage bootstrap, what is and is not built |
+| [Decisions](docs/adr/) | six ADRs — why each significant choice was made, and what was rejected |
 
 ## Install
 
@@ -149,7 +171,8 @@ the payload cannot be swapped independently of the manifest, and a truncated or 
 is refused rather than executed.
 
 Not claimed yet: signed releases and build provenance attestation. Both are on the roadmap. Until
-they exist, the trust boundary is this repository's commit history.
+they exist, the trust boundary is this repository's commit history. Full reasoning in
+[ADR-0005](docs/adr/0005-argument-free-install-via-release-manifest.md).
 
 ## Working from a clone
 
@@ -164,6 +187,17 @@ cd terminal-studio
 Every command below assumes you are in that directory. `./tools/...` and `./ts.ps1` are relative
 paths, so they resolve against your current location and nothing else.
 
+To see what would change, and then to make it happen:
+
+```powershell
+./ts.ps1 plan
+./ts.ps1 apply -WhatIf     # every change, nothing written
+./ts.ps1 apply
+```
+
+After `apply`, close **every** Windows Terminal window and reopen. Fragments are read at application
+startup; a new tab in an existing window will not pick one up.
+
 To see the configuration surface — every knob, its current value, and whether the desired state
 actually binds it:
 
@@ -173,8 +207,9 @@ pwsh -STA -File ./ts.ps1 configure -Surface Wpf
 pwsh -File ./ts.ps1 configure -Json         # the model itself
 ```
 
-`configure` has no save path yet, by design: there is no write adapter, and a half-built save that
-can leave `settings.json` in pieces is worse than no save at all. It exits 3 to say so.
+`configure` has no save path yet, by design: persisting choices means round-tripping a JSON document
+the user hand-edits, and silently losing their comments and ordering is not an acceptable cost. It
+exits 3 to say so.
 
 ## Cutting a release
 
@@ -186,7 +221,7 @@ authoritative for bytes that exist nowhere in history.
 $build = Join-Path $env:TEMP 'ts-build'
 Remove-Item $build -Recurse -Force -ErrorAction SilentlyContinue
 git clone --depth 1 https://github.com/AbdallahxAhmed/terminal-studio $build
-& "$build/tools/New-TSRelease.ps1" -Version v0.1.0
+& "$build/tools/New-TSRelease.ps1" -Version v0.2.0
 ```
 
 This writes the archive with `ts.ps1` at its root, the SHA-256 beside it, and a notes file, then
@@ -218,11 +253,11 @@ to `bootstrap/releases.json` and push:
 
 ```json
 {
-  "version": "v0.1.1",
-  "asset": "TerminalStudio-v0.1.1.zip",
+  "version": "v0.2.0",
+  "asset": "TerminalStudio-v0.2.0.zip",
   "sha256": "the hash the builder printed",
   "tagCommit": "the commit the tag points at",
-  "published": "2026-08-10"
+  "published": "2026-08-11"
 }
 ```
 
@@ -261,18 +296,21 @@ budget out loud.
 ## Roadmap
 
 - [x] Charter, ADRs, lint configuration, CI matrix
+- [x] `ts doctor` — read-only capability and drift detection
+- [x] Desired-state schema and Windows Terminal fragment extraction
+- [x] Adapter seam with mechanically enforced architecture tests
+- [x] `ts plan` — diff desired against observed
 - [x] `ts configure` — one control definition, two renderers, read-only
 - [x] Release builder and verified bootstrap
 - [x] Single-line install with no arguments
+- [x] `ts apply` — converge the file resources, journaled, idempotent, `-WhatIf`
 - [ ] Green CI
+- [ ] Journal-driven uninstall (no hand-maintained mirror of the installer)
+- [ ] A save path for `configure`
+- [ ] JSONL diagnostic logging with a correlation id
 - [ ] Have the release builder write the `releases.json` entry itself
 - [ ] Byte-reproducible archives (normalised timestamps)
-- [ ] `ts doctor` — read-only capability and drift detection
-- [ ] Desired-state schema and Windows Terminal fragment extraction
-- [ ] Adapter seam with mocked unit tests
-- [ ] `ts plan` — diff desired against observed
-- [ ] `ts apply` — converge, journaled, idempotent
-- [ ] Journal-driven uninstall (no hand-maintained mirror of the installer)
+- [ ] Font installation, once the declared hashes are filled in
 - [ ] Signed releases with build provenance attestation
 
 ## Decisions
@@ -281,6 +319,8 @@ budget out loud.
 - [ADR-0002 — Interface: CLI first, TUI as a view, no GUI](docs/adr/0002-interface-cli-first.md)
 - [ADR-0003 — Distribution: GitHub with a verified bootstrap](docs/adr/0003-distribution-github-verified-bootstrap.md)
 - [ADR-0004 — Two surfaces, one definition](docs/adr/0004-two-surfaces-one-definition.md)
+- [ADR-0005 — Argument-free install through a committed release manifest](docs/adr/0005-argument-free-install-via-release-manifest.md)
+- [ADR-0006 — `apply` converges files and delegates everything else](docs/adr/0006-apply-converges-files-only.md)
 - [Architecture overview](docs/architecture.md)
 
 ## License
