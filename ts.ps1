@@ -14,12 +14,18 @@
 
         0  success, nothing would change
         1  unexpected error
-        2  doctor found failures, or plan found changes
+        2  doctor found failures, plan found changes, or apply left work undone
         3  the command exists but is not implemented in this version
 
     That distinction is the point. A tool that exits 0 whether or not the machine
     matches its desired state cannot be used in a pipeline, and a tool that exits
     1 for both 'broken' and 'drifted' forces the caller to parse text.
+
+    apply returns 2 for anything left undone, including resources it deliberately
+    delegates such as packages and fonts. The alternative - exiting 0 while the
+    report immediately above lists four missing packages - would put the exit code
+    and the output in direct contradiction, and the exit code is the half a script
+    can actually read.
 
 .PARAMETER Command
     doctor, plan, configure, apply, or version.
@@ -33,8 +39,8 @@
     For plan, also list resources already in the desired state.
 
 .PARAMETER Unicode
-    For doctor and configure, use symbol markers. Only worth passing once fonts
-    are verified.
+    For doctor, apply, and configure, use symbol markers. Only worth passing once
+    fonts are verified.
 
 .PARAMETER SkipStartupMeasurement
     Skip the shell startup benchmark, which is the slowest check.
@@ -58,7 +64,12 @@
     ./ts.ps1 plan -Json
 
 .EXAMPLE
-    ./ts.ps1 configure
+    ./ts.ps1 apply -WhatIf
+
+    Every change apply would make, with nothing written.
+
+.EXAMPLE
+    ./ts.ps1 apply
 
 .EXAMPLE
     pwsh -STA -File ./ts.ps1 configure -Surface Wpf
@@ -67,7 +78,7 @@
     ./ts.ps1 doctor -SkipStartupMeasurement; if ($LASTEXITCODE -eq 2) { 'drift' }
 #>
 
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Position = 0)]
     [ValidateSet('doctor', 'plan', 'configure', 'apply', 'version')]
@@ -175,25 +186,47 @@ switch ($Command) {
         }
 
         # Printed, so a decision the user just made is not thrown away, then
-        # exited 3, because it has not been stored. Persisting desired state
-        # needs a writer and a change journal, and neither exists in 0.1.0.
-        # Exiting 0 here would tell every caller the settings were saved.
+        # exited 3, because it has not been stored. Persisting desired state needs
+        # a writer for the desired-state document itself, which is a different
+        # thing from the file writer apply uses: it means round-tripping JSON the
+        # user hand-edits, and losing their comments and ordering is not an
+        # acceptable cost. Exiting 0 here would tell every caller it was saved.
         $edited | ConvertTo-Json -Depth 5
 
-        Write-Warning 'Saving desired state is not implemented in 0.1.0. The choices above were printed, not stored.'
+        Write-Warning 'Saving desired state is not implemented. The choices above were printed, not stored.'
         Write-Warning 'Run: ./ts.ps1 configure -Json > controls.json   to keep the model for later.'
         exit 3
     }
 
     'apply' {
-        # Deliberately not stubbed. An empty apply that exits 0 would be worse than
-        # no apply at all: every caller, including a future test, would read success
-        # and conclude the machine had converged. Failing loudly with its own exit
-        # code is the honest behaviour until the change journal exists, because
-        # writing changes without recording them is how the predecessor ended up
-        # unable to uninstall what it installed.
-        Write-Warning 'apply is not implemented in 0.1.0.'
-        Write-Warning 'Run: ./ts.ps1 plan   to see what needs doing, with a command for each item.'
-        exit 3
+        # Resolved with the identical call the filesystem adapter makes, so the
+        # paths printed in the footer cannot drift away from where the files
+        # actually went. Re-deriving them from $env:LOCALAPPDATA would be the same
+        # answer almost always, and 'almost always' is not a property worth having
+        # in the line that tells someone where their backups are.
+        $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+        $journalPath = Join-Path -Path $localAppData -ChildPath 'TerminalStudio\journal.jsonl'
+        $backupRoot = Join-Path -Path $localAppData -ChildPath 'TerminalStudio\backups'
+
+        # No -WhatIf argument is passed. SupportsShouldProcess on this script means
+        # PowerShell has already set $WhatIfPreference for the whole call stack, and
+        # the check happens at the write itself rather than being re-decided by each
+        # layer on the way down.
+        $results = @(Invoke-TSApply @common)
+
+        if ($Json) {
+            $results | ConvertTo-Json -Depth 4
+        }
+        else {
+            Show-TSApplyReport -Result $results -JournalPath $journalPath -BackupRoot $backupRoot -Unicode:$Unicode -WhatIf:$WhatIfPreference
+        }
+
+        $outstanding = @($results | Where-Object { $_.Status -in @('Fail', 'Skip') }).Count
+
+        if ($outstanding -gt 0) {
+            exit 2
+        }
+
+        exit 0
     }
 }
