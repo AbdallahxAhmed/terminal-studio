@@ -114,3 +114,97 @@ function Test-TSTerminalSettingsParse {
         $false
     }
 }
+
+function Get-TSTerminalProfileOverride {
+    <#
+    .SYNOPSIS
+        Returns the property names a user's settings.json sets directly on one profile.
+
+    .DESCRIPTION
+        Windows Terminal composes a profile from three layers, in order: its own
+        defaults, then installed fragments, then the user's settings.json. The last
+        layer to mention a property wins.
+
+        The consequence is the reason this function exists. Deploying a fragment
+        that sets colorScheme and font onto a machine whose settings.json already
+        sets colorScheme and font changes nothing at all, and every check that
+        looks for the fragment file will report success while the terminal looks
+        exactly as it did before. Checking that a file is present is not the same
+        as checking that it has an effect, and only the second one is what the user
+        asked for.
+
+        Identity properties are excluded because they do not participate in
+        appearance layering in a way anyone cares about: a profile has to say which
+        profile it is. Everything else is returned, and it is the caller's job to
+        intersect this list with the properties a specific fragment actually sets.
+        Returning a verdict here instead would flag a profile that merely overrides
+        tabTitle as conflicting with a colour fragment, and a warning that fires
+        when nothing is wrong is a warning people learn to skip.
+
+        Failure is silent by design and returns an empty array. This is read by
+        diagnostics; an unreadable settings file is already reported by
+        Test-TSTerminalSettingsParse, and reporting it twice from two checks makes
+        one problem look like two.
+
+    .PARAMETER SettingsPath
+        Path to the Windows Terminal settings.json.
+
+    .PARAMETER Guid
+        Profile GUID, in braces, as it appears in the file.
+
+    .OUTPUTS
+        String array of property names. Empty when the profile is not found.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $SettingsPath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Guid
+    )
+
+    if (-not (Test-Path -LiteralPath $SettingsPath)) {
+        return @()
+    }
+
+    try {
+        $settings = Get-Content -LiteralPath $SettingsPath -Raw -Encoding utf8 | ConvertFrom-Json
+    }
+    catch {
+        return @()
+    }
+
+    # Navigated one property at a time. Under Set-StrictMode -Version Latest,
+    # reading a property that does not exist is a terminating error rather than
+    # $null, and a settings file with no profiles block is unusual but legal.
+    if (@($settings.PSObject.Properties.Name) -notcontains 'profiles') {
+        return @()
+    }
+
+    $profiles = $settings.profiles
+
+    if (@($profiles.PSObject.Properties.Name) -notcontains 'list') {
+        return @()
+    }
+
+    $identity = @(
+        'guid'
+        'name'
+        'source'
+        'hidden'
+        'commandline'
+        'startingDirectory'
+    )
+
+    $match = @($profiles.list | Where-Object { [string] $_.guid -eq $Guid })
+
+    if ($match.Count -eq 0) {
+        return @()
+    }
+
+    @($match[0].PSObject.Properties.Name | Where-Object { $identity -notcontains $_ })
+}
