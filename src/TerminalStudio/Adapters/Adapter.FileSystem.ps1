@@ -84,6 +84,16 @@ function Expand-TSPath {
         outright when the target does not exist yet - which is the normal case for
         a path apply is about to create.
 
+        Relative segments are collapsed last, and only for a path that is already
+        rooted. This is not cosmetic vanity: paths built from $PSScriptRoot carry
+        a trail of '..\..\..' into every message the user reads, and a failure
+        message is the one place a path has to be legible, because it is the only
+        output a user is expected to act on. The rooted test matters because
+        GetFullPath resolves a relative path against the .NET process working
+        directory, which is not PowerShell's current location and diverges from it
+        the moment anyone runs Set-Location. Quietly resolving against the wrong
+        base would be a worse answer than declining to normalise.
+
     .PARAMETER Path
         A path possibly containing %VARIABLE% references or a leading tilde.
     #>
@@ -98,15 +108,26 @@ function Expand-TSPath {
     $expanded = [Environment]::ExpandEnvironmentVariables($Path)
 
     if ($expanded -eq '~') {
-        return (Get-TSSpecialFolder -Name 'UserProfile')
+        $expanded = Get-TSSpecialFolder -Name 'UserProfile'
     }
-
-    if ($expanded.StartsWith('~/') -or $expanded.StartsWith('~\')) {
+    elseif ($expanded.StartsWith('~/') -or $expanded.StartsWith('~\')) {
         $relative = $expanded.Substring(2)
-        return (Join-Path -Path (Get-TSSpecialFolder -Name 'UserProfile') -ChildPath $relative)
+        $expanded = Join-Path -Path (Get-TSSpecialFolder -Name 'UserProfile') -ChildPath $relative
     }
 
-    $expanded
+    if (-not [System.IO.Path]::IsPathRooted($expanded)) {
+        return $expanded
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($expanded)
+    }
+    catch {
+        # Normalisation is a readability improvement, never a precondition. A path
+        # this cannot tidy is still a path the caller asked for, and swallowing the
+        # caller's input here to raise a cosmetic error would be a poor trade.
+        return $expanded
+    }
 }
 
 function Get-TSFileHashValue {
