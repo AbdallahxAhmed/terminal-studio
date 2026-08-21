@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStudio.psm1'
-    ModuleVersion     = '0.2.0'
+    ModuleVersion     = '0.3.0'
     GUID              = 'f3b1c2d4-5e6a-4b8c-9d0e-1a2b3c4d5e6f'
     Author            = 'Abdallah Ahmed'
     Copyright         = '(c) 2026 Abdallah Ahmed. MIT licensed.'
@@ -20,7 +20,13 @@
     # with none of those is a command that can change a machine and cannot say
     # what it changed, which is the defect that motivated this project.
     #
-    # It still does not install packages, fonts, or modules. That boundary is
+    # Invoke-TSUninstall arrives in 0.3.0 and completes that argument. Until it
+    # existed, the journal was a record nobody read, and 'reversible' was a claim
+    # about a file format rather than about a command the user could run. It is
+    # deliberately a replay of that journal and not a second list of the files
+    # apply writes, because two lists of the same thing drift.
+    #
+    # apply still does not install packages, fonts, or modules. That boundary is
     # documented in the function itself and reported in its output, rather than
     # being left for a user to discover.
     FunctionsToExport = @(
@@ -28,6 +34,7 @@
         'Get-TSPlan'
         'Invoke-TSApply'
         'Invoke-TSDoctor'
+        'Invoke-TSUninstall'
     )
 
     CmdletsToExport   = @()
@@ -39,7 +46,7 @@
             Tags         = @('Windows', 'Terminal', 'WindowsTerminal', 'DesiredState', 'Configuration')
             LicenseUri   = 'https://github.com/AbdallahxAhmed/terminal-studio/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/AbdallahxAhmed/terminal-studio'
-            ReleaseNotes = 'Adds apply for file resources, with backups, an append-only journal, and -WhatIf. Packages, fonts, and modules are reported but not installed.'
+            ReleaseNotes = 'Adds uninstall, which reverses an apply by replaying the change journal backwards, refusing to touch any file that has changed since apply wrote it. Adds an opt-in JSONL log with a per-run correlation id. apply still does not install packages, fonts, or modules.'
         }
     }
 }
