@@ -1,0 +1,126 @@
+# STAGED, NOT ACTIVE.
+#
+# This file has to live at .github/workflows/release.yml to run. It is parked here
+# because the token that wrote it cannot create or modify files under
+# .github/workflows/ - GitHub requires an explicit workflow scope for that, which
+# is the correct behaviour: a token able to add a workflow is a token able to run
+# arbitrary code with the repository's secrets.
+#
+# Activate it with one command, from a checkout:
+#
+#     git mv -f .github/release.yml .github/workflows/release.yml
+#     git commit -m "Activate the release workflow"
+#     git push
+#
+# What it does, and why each piece is here:
+#
+#   - Runs the test suite before building. A tagged release that was never tested
+#     is the tag people trust most and deserve least.
+#   - Builds with tools/New-TSRelease.ps1, the same script a human runs, so the
+#     artifact is not the product of a second build recipe that can drift.
+#   - Attests build provenance. This is what makes 'signed releases' real: the
+#     attestation ties the archive to this repository, this workflow file, and this
+#     commit, and gh attestation verify checks it without anyone holding a key.
+#   - Does NOT update bootstrap/releases.json. That entry is recorded afterwards by
+#     -UpdateManifest, which downloads the published asset and refuses to write
+#     unless the bytes match. Automating it inside the same run would remove the
+#     one check that makes the recorded hash worth reading.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag to build, for example v0.3.0'
+        required: true
+        type: string
+
+# Least privilege, and every one of these is load bearing:
+#   contents: write      creating the release and uploading the asset
+#   id-token: write      the OIDC token the attestation is bound to
+#   attestations: write  storing the attestation itself
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    # windows-latest because the module requires 7.4 and the payload is a Windows
+    # tool. The archive itself would build anywhere; being able to run the suite
+    # that guards it would not.
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+        with:
+          # The build script reads HEAD out of .git to stamp provenance into the
+          # notes, so the checkout has to include it. It does by default; this is
+          # a reminder for anyone tempted to add a sparse or blobless fetch.
+          fetch-depth: 1
+
+      - name: Work out which version is being built
+        id: version
+        run: |
+          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+              '${{ inputs.version }}'
+          }
+          else {
+              '${{ github.ref_name }}'
+          }
+
+          if ($version -notmatch '^v\d+\.\d+\.\d+$') {
+              throw "Refusing to build '$version': releases are tagged vMAJOR.MINOR.PATCH."
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Install Pester
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck -AllowClobber
+
+      - name: Run the tests
+        run: ./tests/Invoke-Tests.ps1
+
+      - name: Build the archive
+        run: |
+          ./tools/New-TSRelease.ps1 -Version '${{ steps.version.outputs.version }}' -OutputDirectory './artifacts'
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'artifacts/TerminalStudio-${{ steps.version.outputs.version }}.zip'
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $asset = "artifacts/TerminalStudio-$version.zip"
+          $notes = "artifacts/TerminalStudio-$version.notes.md"
+
+          gh release create $version $asset --repo '${{ github.repository }}' --target '${{ github.sha }}' --title $version --notes-file $notes
+
+      - name: Say what still has to happen by hand
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+
+          Write-Host ''
+          Write-Host "  $version is published, and the install one-liner is still serving the previous release."
+          Write-Host '  Record it, from a checkout of main:'
+          Write-Host ''
+          Write-Host "    ./tools/New-TSRelease.ps1 -Version $version -Force -UpdateManifest -Note '<what changed>'"
+          Write-Host '    git add bootstrap/releases.json'
+          Write-Host "    git commit -m `"Record $version in the release manifest`""
+          Write-Host '    git push'
+          Write-Host ''
