@@ -2,9 +2,9 @@
 
 Every command, what it touches, and what it returns.
 
-The short version: `doctor` and `plan` are safe to run at any time on any machine. `apply` is the
-only command that writes anything, and `apply -WhatIf` shows you exactly what it would write
-without writing it.
+The short version: `doctor` and `plan` are safe to run at any time on any machine. `apply`,
+`configure -Save` and `uninstall` write, and each of them takes `-WhatIf` to show you exactly what it
+would do without doing it.
 
 ---
 
@@ -21,7 +21,7 @@ Nothing on the machine is modified.
 To pin a version, or to skip the automatic `doctor` run:
 
 ```powershell
-$env:TS_VERSION = 'v0.2.0'
+$env:TS_VERSION = 'v0.3.0'
 $env:TS_NO_DOCTOR = '1'
 irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1 | iex
 ```
@@ -30,13 +30,13 @@ A pipe into `Invoke-Expression` cannot pass arguments, which is why those are en
 The scriptblock form takes real parameters instead:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.2.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AbdallahxAhmed/terminal-studio/main/bootstrap/get.ps1))) -Version v0.3.0
 ```
 
 After installing, the entry point is the unpacked copy:
 
 ```powershell
-$ts = "$env:LOCALAPPDATA\TerminalStudio\v0.2.0\ts.ps1"
+$ts = "$env:LOCALAPPDATA\TerminalStudio\v0.3.0\ts.ps1"
 pwsh -File $ts doctor
 ```
 
@@ -102,7 +102,7 @@ Status in a plan is a promise about `apply`:
 
 ## `ts apply`
 
-**Writes.** The only command that does.
+**Writes.**
 
 ```powershell
 ./ts.ps1 apply -WhatIf     # every change, nothing written. Run this first.
@@ -142,6 +142,7 @@ Global Windows Terminal settings — `defaultProfile`, window `theme` — live i
 - **Backed up.** Every replaced file is copied to `%LOCALAPPDATA%\TerminalStudio\backups` first, and
   the backup path appears in both the report and the journal.
 - **Journaled.** Every change appends one JSON line to `%LOCALAPPDATA%\TerminalStudio\journal.jsonl`.
+- **Reversible.** `ts uninstall` replays that journal backwards. See below.
 - **Staged.** Files are written to `<destination>.tsnew` and then moved into place, so an interrupted
   write cannot leave a half-written settings fragment where Windows Terminal will try to parse it.
 - **`-WhatIf` works all the way down.** The check happens at the write, not at each layer on the way
@@ -160,9 +161,46 @@ Clear the local value with the reset arrow beside it in Settings.
 
 ---
 
+## `ts uninstall`
+
+**Writes.** Undoes what `apply` and `configure -Save` recorded doing.
+
+```powershell
+./ts.ps1 uninstall -WhatIf              # what would be undone
+./ts.ps1 uninstall                      # the most recent run
+./ts.ps1 uninstall -RunId <guid>        # one named run
+./ts.ps1 uninstall -All                 # every recorded change
+```
+
+It reads the journal, walks it newest first, and reverses each record: a `create` is deleted, a
+`replace` or an `edit` is restored from its backup. There is no second list of things to undo — that
+is the whole point, and [ADR-0008](adr/0008-uninstall-replays-the-journal.md) records why.
+
+### What it refuses to do
+
+- **A file whose current hash does not match what `apply` recorded writing is left alone**, reported
+  as `SKIP`. If you edited a managed file afterwards, that edit is not this command's to revert.
+- **A backup that no longer matches its recorded hash is not restored**, reported as `FAIL` with both
+  hashes. A backup that has changed has stopped being evidence of anything.
+- **A destination that is already gone is `SKIP`**, not a failure. Already absent is the state this
+  command exists to produce.
+- **An unreadable journal line costs a warning**, not the run. A journal is appended to by a process
+  that can be killed mid-write, and one torn line must not cost you the rest of your history.
+
+Undo records are journaled too, carrying `undoOf` and an action of `remove` or `restore`, so the
+history stays complete. They are not themselves replayable — running `uninstall` twice does not put
+the files back.
+
+It cannot undo what was never recorded: packages, fonts and gallery modules are delegated by
+ADR-0006, so `apply` never installed them and `uninstall` never removes them. And if you delete
+`journal.jsonl`, `uninstall` becomes a no-op that reports `no recorded changes` — `apply` keeps
+working, and its history is gone.
+
+---
+
 ## `ts configure`
 
-**Reads. Writes nothing.** Currently exits `3`.
+**Reads by default. Writes with `-Save`.**
 
 Every knob, its current value, and whether desired state actually binds it.
 
@@ -171,11 +209,41 @@ pwsh -File ./ts.ps1 configure               # terminal form, interactive
 pwsh -File ./ts.ps1 configure -ReadOnly     # draws, reads no input
 pwsh -STA -File ./ts.ps1 configure -Surface Wpf
 pwsh -File ./ts.ps1 configure -Json         # the model itself
+pwsh -File ./ts.ps1 configure -Save         # persist what you changed
+pwsh -File ./ts.ps1 configure -Save -WhatIf # what it would write
 ```
 
 Both surfaces render the same definition from `Data/controls.json`. Neither knows what a control
-means. There is no save path yet: persisting choices means round-tripping a JSON document the user
-hand-edits, and silently losing their comments and ordering is not an acceptable cost.
+means.
+
+Without `-Save`, nothing is written and the command exits `0` with a warning naming `-Save`. It
+used to exit `3`, back when there was no save path at all.
+
+### What `-Save` writes, and what it does not
+
+It edits **desired state**, not the machine. The report says so, and the next step is `apply`:
+
+```powershell
+pwsh -File ./ts.ps1 configure -Save
+./ts.ps1 apply -WhatIf
+./ts.ps1 apply
+```
+
+Each saved control is a text splice at the exact span of the old value, so comments, key order and
+formatting in the target document survive — these are files you are invited to hand-edit, and a
+parse-and-reserialize would silently reformat all of them. The edited text is reparsed and compared
+against the original before anything is written, and the write is refused unless exactly one path
+changed and it is the one you asked for. See
+[ADR-0009](adr/0009-configure-save-edits-one-value.md).
+
+Three things it will not do:
+
+- **Containers.** A control whose target is an object or an array is refused, because a splice of a
+  container is where "replace these characters" stops being provably local.
+- **Presence controls.** "Is this package in the list" is not a value to set. Those report `SKIP`.
+- **Your `settings.json`.** Unchanged by this feature, for the reasons in ADR-0006.
+
+Saves are backed up, journaled as `edit` records, and reversible with `ts uninstall`.
 
 ---
 
@@ -196,8 +264,8 @@ matches cannot be used in a pipeline.
 | --- | --- |
 | `0` | success; nothing would change |
 | `1` | unexpected error |
-| `2` | `doctor` found failures, `plan` found changes, or `apply` left work undone |
-| `3` | the command exists but is not implemented in this version |
+| `2` | `doctor` found failures, `plan` found changes, or `apply`, `configure -Save` or `uninstall` left work undone |
+| `3` | reserved. It used to mean "the command exists but is not implemented", and nothing returns it now. |
 
 `apply` returns `2` for anything left undone, including the resources it deliberately delegates.
 Exiting `0` while the report immediately above lists four uninstalled packages would put the exit
@@ -229,47 +297,89 @@ if ($LASTEXITCODE -eq 2) { 'this machine has drifted' }
 }
 ```
 
-`runId` is shared by every change in one `apply`, which is what will let uninstall reverse a run as a
-unit rather than file by file.
+`runId` is shared by every change in one run, which is what lets `uninstall` reverse a run as a unit
+rather than file by file.
 
-### Undoing a change by hand
+Five actions appear in the journal:
 
-Journal-driven uninstall is not built yet. Until it is, the journal plus the backups are enough to
-reverse anything `apply` did:
+| Action | Written by | Reversed by |
+| --- | --- | --- |
+| `create` | `apply`, for a destination that did not exist | deleting it |
+| `replace` | `apply`, over an existing file | restoring `backup` |
+| `edit` | `configure -Save`, carrying the JSON `path` it changed | restoring `backup` |
+| `remove` | `uninstall`, mirroring a reversed `create` | nothing; undo records are not replayed |
+| `restore` | `uninstall`, mirroring a reversed `replace` or `edit` | nothing |
+
+### Reading it
 
 ```powershell
 $journal = "$env:LOCALAPPDATA\TerminalStudio\journal.jsonl"
 
-# What happened, most recent last
 Get-Content $journal | ForEach-Object { $_ | ConvertFrom-Json } |
-    Format-Table timestamp, action, kind, destination
-
-# Reverse the most recent change that replaced something
-$last = Get-Content $journal | ForEach-Object { $_ | ConvertFrom-Json } |
-    Where-Object { $_.action -eq 'replace' } | Select-Object -Last 1
-
-Copy-Item -LiteralPath $last.backup -Destination $last.destination -Force
+    Format-Table timestamp, runId, action, kind, destination
 ```
 
-Entries with `"action": "create"` had no previous version, so reversing one means deleting the
-destination rather than restoring a backup.
+To undo something, use `ts uninstall`. Earlier versions of this page recommended copying a backup
+over its destination by hand, which skips the check that the destination is still the file `apply`
+wrote — the one way to follow the documentation and lose your own edit.
+
+---
+
+## The structured log
+
+Off unless you ask for it. Point `TS_LOG_PATH` at a file:
+
+```powershell
+$env:TS_LOG_PATH = "$env:LOCALAPPDATA\TerminalStudio\ts.log.jsonl"
+./ts.ps1 apply
+```
+
+One JSON object per line, with a `timestamp`, `level`, `message`, and the same `runId` the journal
+records for that run carry — so a log covering many runs can be split by joining the two on it.
+
+```powershell
+Get-Content $env:TS_LOG_PATH | ForEach-Object { $_ | ConvertFrom-Json } |
+    Where-Object runId -eq '6f1e2c3a-...'
+```
+
+With the variable unset, nothing is written and no directory is created. If the path cannot be
+written, you get one warning and the run continues — a logger that can abort the operation it is
+describing is worse than no logger.
 
 ---
 
 ## Cutting a release
 
-See the README section on [cutting a release](../README.md#cutting-a-release). The short form:
+Three steps, in an order that cannot be reversed. See also
+[ADR-0007](adr/0007-releases-are-reproducible-and-attested.md).
 
 ```powershell
+# 1. Build from a clean clone. Refuses if the tree is dirty, or if the tag and
+#    ModuleVersion disagree.
 $build = Join-Path $env:TEMP 'ts-build'
 Remove-Item $build -Recurse -Force -ErrorAction SilentlyContinue
 git clone --depth 1 https://github.com/AbdallahxAhmed/terminal-studio $build
-& "$build/tools/New-TSRelease.ps1" -Version v0.2.0
+& "$build/tools/New-TSRelease.ps1" -Version v0.3.0
+
+# 2. Publish with the gh command it printed.
+
+# 3. Record it. This downloads the published asset, hashes those bytes, and
+#    refuses to write unless they match what step 1 built.
+& "$build/tools/New-TSRelease.ps1" -Version v0.3.0 -Force -UpdateManifest -Note '<what changed>'
+git -C $build add bootstrap/releases.json
+git -C $build commit -m 'Record v0.3.0 in the release manifest'
+git -C $build push
 ```
 
-Then publish with the printed `gh release create` command, and record the printed hash in
-`bootstrap/releases.json`. Both steps are required; the second is what keeps the install line
-working.
+Step 3 is what makes the install one-liner serve the new version. Skip it and everyone keeps getting
+the previous release, which is exactly what happened to 0.2.0.
+
+If the release workflow is active, steps 1 and 2 happen on a tag push, and the archive is attested
+so anyone can check where it came from:
+
+```powershell
+gh attestation verify .\TerminalStudio-v0.3.0.zip --repo AbdallahxAhmed/terminal-studio
+```
 
 ---
 
