@@ -39,6 +39,39 @@ function Get-TSFileText {
     Get-Content -LiteralPath $Path -Raw -Encoding utf8
 }
 
+function Get-TSFileLine {
+    <#
+    .SYNOPSIS
+        Reads a file as an array of lines. A missing file returns nothing.
+
+    .DESCRIPTION
+        The counterpart to Add-TSFileLine, and separate from Get-TSFileText
+        because the journal is JSONL: the unit the caller wants is a line, and
+        splitting a raw string by hand means picking a newline convention and
+        being wrong about one of them.
+
+        A missing file is an empty array, not an error. An absent journal means
+        nothing has ever been applied on this machine, which is an ordinary thing
+        for uninstall to find and report rather than a failure to raise.
+
+    .PARAMETER Path
+        File to read.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @()
+    }
+
+    @(Get-Content -LiteralPath $Path -Encoding utf8)
+}
+
 function Get-TSSpecialFolder {
     <#
     .SYNOPSIS
@@ -128,6 +161,35 @@ function Expand-TSPath {
         # caller's input here to raise a cosmetic error would be a poor trade.
         return $expanded
     }
+}
+
+function Get-TSLogPath {
+    <#
+    .SYNOPSIS
+        Returns the structured log path the environment asks for, or an empty string.
+
+    .DESCRIPTION
+        Logging to a file is opt-in through TS_LOG_PATH, and this is the only
+        place that variable is read. Write-TSLog lives in Private/, where reaching
+        for the environment directly would be the same category of shortcut as
+        reaching for Add-Content: it works, and it costs the seam that lets a test
+        exercise the logger with no machine underneath it.
+
+        An unset or blank variable is an empty string rather than $null, so the
+        caller's test is 'if (-not $path)' and never a null check that a strict
+        mode session will fail differently.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    $value = [Environment]::GetEnvironmentVariable('TS_LOG_PATH')
+
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return ''
+    }
+
+    Expand-TSPath -Path $value.Trim()
 }
 
 function Get-TSFileHashValue {
@@ -292,6 +354,97 @@ function Copy-TSFile {
 
     Copy-Item -LiteralPath $Source -Destination $staged -Force
     Move-Item -LiteralPath $staged -Destination $Destination -Force
+}
+
+function Set-TSFileText {
+    <#
+    .SYNOPSIS
+        Writes text to a file without ever leaving it half written.
+
+    .DESCRIPTION
+        The same staged-then-moved sequence as Copy-TSFile, for callers holding
+        new content in memory rather than in a file. configure -Save is the caller
+        that needs it: what it writes is the document it just read with a single
+        value spliced into it, and there is no source file to copy from.
+
+        UTF-8 with no byte order mark, and whatever newlines the caller put in the
+        string. Both matter for a document a human also edits. Set-Content's utf8
+        writes a BOM on Windows PowerShell, and while this module only runs on 7.4,
+        the files it writes are read by tools that are not PowerShell at all.
+        Rewriting line endings would turn a one-value change into a diff that
+        touches every line, which is the fastest way to lose a user's trust in a
+        tool that edits their files.
+
+    .PARAMETER Path
+        File to write. Parent directories are created.
+
+    .PARAMETER Text
+        Exact content to write.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Text
+    )
+
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Write file')) {
+        return
+    }
+
+    $parent = Split-Path -Path $Path -Parent
+
+    if ($parent) {
+        $null = New-TSDirectory -Path $parent -Confirm:$false
+    }
+
+    $staged = "$Path.tsnew"
+    $encoding = [System.Text.UTF8Encoding]::new($false)
+
+    [System.IO.File]::WriteAllText($staged, $Text, $encoding)
+    Move-Item -LiteralPath $staged -Destination $Path -Force
+}
+
+function Remove-TSFile {
+    <#
+    .SYNOPSIS
+        Deletes a file. Reports whether there was one to delete.
+
+    .DESCRIPTION
+        Returns a boolean for the same reason New-TSDirectory does: the caller is
+        writing a journal entry, and the only fact it needs is whether this counted
+        as a change.
+
+        A missing file is not an error. uninstall reaches this function while
+        undoing a create, and a file the user has already deleted by hand is
+        precisely the state uninstall was trying to produce.
+
+    .PARAMETER Path
+        File to delete.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    if ($PSCmdlet.ShouldProcess($Path, 'Delete file')) {
+        Remove-Item -LiteralPath $Path -Force
+        return $true
+    }
+
+    $false
 }
 
 function Add-TSFileLine {

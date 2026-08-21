@@ -31,6 +31,14 @@ function New-TSResult {
     .OUTPUTS
         TerminalStudio.Result
     #>
+    # New- is on the analyzer's list of verbs that change system state, and the
+    # rule that comes with it asks for a -WhatIf gate. This function allocates an
+    # object and touches nothing, so a gate here would misdescribe it - and it
+    # would be self-defeating, because the code paths that implement -WhatIf call
+    # this function to report the change they did not make. Suppressed at the one
+    # function rather than added to ExcludeRules, where it would stop protecting
+    # the functions that do write.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Constructs a result object in memory; there is no state to gate.')]
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(

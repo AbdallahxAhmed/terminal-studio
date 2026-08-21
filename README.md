@@ -5,17 +5,21 @@
 This is a configuration-management problem with a fleet size of one. It is *not* an installer
 problem. That distinction drives every decision in this repository.
 
-> **Status: alpha.** All four verbs are implemented. `apply` converges the file resources — terminal
+> **Status: beta.** Every verb is implemented, including `uninstall`, which replays the change
+> journal backwards, and a save path for `configure`. `apply` converges the file resources — terminal
 > fragment, prompt theme, backdrop, shell profile — with backups, an append-only journal, and
 > `-WhatIf`. It deliberately does **not** install packages, fonts, or modules; it reports them with
 > the command that would. See [ADR-0006](docs/adr/0006-apply-converges-files-only.md).
 >
-> **0.2.0 is on `main` and not yet published.** The install one-liner currently serves **v0.1.0**,
-> which predates `apply` and carries a font-detection bug. Cut a release to move it.
+> Three things stand between this and 1.0, and none of them is a feature:
 >
-> **CI is red.** The workflow fails at startup: `matrix` is referenced from
-> `jobs.<id>.steps[*].shell`, which is not one of the contexts available there. The fix is to move
-> it to `jobs.<id>.defaults.run.shell`, where `matrix` *is* available.
+> - **v0.3.0 is not published.** The install one-liner still serves **v0.1.0**, which predates
+>   `apply` and carries a font-detection bug. Cutting and recording the release is what moves it.
+> - **CI has never passed.** The workflow referenced `matrix` from `jobs.<id>.steps[*].shell`, which
+>   is not a context available there, and failed at startup every time. The corrected workflow is
+>   staged at `.github/ci.yml` and takes effect when it is moved into `.github/workflows/`.
+> - **The integration suite has never run.** `tests/integration/` targets a disposable machine, and
+>   nothing has verified this on a clean Windows install end to end.
 
 ---
 
@@ -33,8 +37,9 @@ verbs:
 | --- | --- | --- |
 | `ts doctor` | none | Is this machine capable and healthy? What is drifting? |
 | `ts plan` | none | What exactly would change, and from what to what? |
-| `ts configure` | none yet | What can I turn on or off, and what is currently set? |
+| `ts configure` | only with `-Save` | What can I turn on or off, and what is currently set? |
 | `ts apply` | **yes** | Make the machine match the desired state. |
+| `ts uninstall` | **yes** | Undo what was actually done, from the record of doing it. |
 
 Three properties fall out of this, none of which an imperative installer can offer:
 
@@ -42,7 +47,10 @@ Three properties fall out of this, none of which an imperative installer can off
   before anything is written, and `tests/unit/Apply.Tests.ps1` asserts that a second run appends
   nothing to the journal.
 - **Reversibility.** Every replaced file is backed up and every change is journaled with its previous
-  hash. There is no separate uninstaller to keep in sync.
+  hash, and `uninstall` reverses those records newest first. There is no second list of things to
+  undo, which is the whole point: a hand-maintained uninstaller stores the same knowledge twice and
+  the copies drift on the first change. See
+  [ADR-0008](docs/adr/0008-uninstall-replays-the-journal.md).
 - **Auditability.** Every change is a diff in a versioned file, reviewable before it runs, and
   `apply -WhatIf` shows exactly what would happen without doing it.
 
@@ -114,10 +122,12 @@ An architecture rule that is not enforced by a test is a comment.
 
 | Document | What it covers |
 | --- | --- |
-| [Usage](docs/usage.md) | every command, exit codes, the change journal, undoing a change |
+| [Usage](docs/usage.md) | every command, exit codes, the change journal, the log, undoing a change |
 | [Troubleshooting](docs/troubleshooting.md) | real failures with their verbatim error text |
 | [Architecture](docs/architecture.md) | the layers, the two-stage bootstrap, what is and is not built |
-| [Decisions](docs/adr/) | six ADRs — why each significant choice was made, and what was rejected |
+| [Security](SECURITY.md) | the threat model of the install one-liner, and how to report an issue |
+| [Contributing](CONTRIBUTING.md) | the seam rules, the test expectations, what a commit message is for |
+| [Decisions](docs/adr/) | nine ADRs — why each significant choice was made, and what was rejected |
 
 ## Install
 
@@ -170,9 +180,18 @@ and no amount of hashing changes that. What the hash does buy is narrower and st
 the payload cannot be swapped independently of the manifest, and a truncated or corrupted download
 is refused rather than executed.
 
-Not claimed yet: signed releases and build provenance attestation. Both are on the roadmap. Until
-they exist, the trust boundary is this repository's commit history. Full reasoning in
-[ADR-0005](docs/adr/0005-argument-free-install-via-release-manifest.md).
+Releases built by the release workflow carry a **build provenance attestation**, which ties the
+archive to this repository, that workflow file, and the commit it was built from:
+
+```powershell
+gh attestation verify .\TerminalStudio-v0.3.0.zip --repo AbdallahxAhmed/terminal-studio
+```
+
+`get.ps1` does not check attestations, and that is deliberate: it runs on Windows PowerShell 5.1 on a
+machine that may not have the GitHub CLI, and making a bootstrap depend on a tool the bootstrap is
+meant to install would trade the property that matters for the one that sounds better. Full reasoning
+in [ADR-0005](docs/adr/0005-argument-free-install-via-release-manifest.md) and
+[ADR-0007](docs/adr/0007-releases-are-reproducible-and-attested.md).
 
 ## Working from a clone
 
@@ -198,6 +217,16 @@ To see what would change, and then to make it happen:
 After `apply`, close **every** Windows Terminal window and reopen. Fragments are read at application
 startup; a new tab in an existing window will not pick one up.
 
+To undo it, from the record of what was done rather than from a guess:
+
+```powershell
+./ts.ps1 uninstall -WhatIf
+./ts.ps1 uninstall
+```
+
+A managed file you edited afterwards is reported and left alone — the hash it was written with is in
+the journal, and a file that no longer matches is not this command's to revert.
+
 To see the configuration surface — every knob, its current value, and whether the desired state
 actually binds it:
 
@@ -205,13 +234,18 @@ actually binds it:
 pwsh -File ./ts.ps1 configure -ReadOnly     # terminal form, draws without reading input
 pwsh -STA -File ./ts.ps1 configure -Surface Wpf
 pwsh -File ./ts.ps1 configure -Json         # the model itself
+pwsh -File ./ts.ps1 configure -Save         # persist what you changed, then run apply
 ```
 
-`configure` has no save path yet, by design: persisting choices means round-tripping a JSON document
-the user hand-edits, and silently losing their comments and ordering is not an acceptable cost. It
-exits 3 to say so.
+`-Save` edits desired state, not the machine; `apply` is what converges the machine onto it. Each
+saved value is a text splice at the exact span of the old one, so the comments and key order in
+documents you hand-edit survive, and the result is reparsed and refused unless exactly one path
+changed. Without `-Save`, `configure` writes nothing and exits 0. See
+[ADR-0009](docs/adr/0009-configure-save-edits-one-value.md).
 
 ## Cutting a release
+
+Three steps, in an order that cannot be reversed: build, publish, record.
 
 Build from a fresh clone. The script refuses a dirty working tree, because an archive containing
 uncommitted changes cannot be rebuilt from the tag that names it, and the hash would then be
@@ -221,7 +255,7 @@ authoritative for bytes that exist nowhere in history.
 $build = Join-Path $env:TEMP 'ts-build'
 Remove-Item $build -Recurse -Force -ErrorAction SilentlyContinue
 git clone --depth 1 https://github.com/AbdallahxAhmed/terminal-studio $build
-& "$build/tools/New-TSRelease.ps1" -Version v0.2.0
+& "$build/tools/New-TSRelease.ps1" -Version v0.3.0
 ```
 
 This writes the archive with `ts.ps1` at its root, the SHA-256 beside it, and a notes file, then
@@ -238,38 +272,39 @@ understanding rather than copying blindly:
 The script also refuses if the tag disagrees with `ModuleVersion` in the manifest, because an archive
 that misreports its own version is a defect nothing downstream would catch.
 
-**The archive is not byte-reproducible.** Zip stores file modification times, and `git clone` stamps
-those at checkout, so rebuilding from identical sources yields a different hash. Publish the archive
-you built; do not rebuild afterwards and expect the published hash to match. Normalising those
-timestamps is on the roadmap and is a prerequisite for meaningful build provenance.
+The archive is **byte-reproducible on a given runtime**: entries are added in ordinal order with a
+fixed timestamp, so the same commit built twice produces the same hash. Deflate belongs to .NET
+rather than to this project, so a different PowerShell or .NET version may still compress
+differently — the published hash remains the authority, and reproducibility is what lets someone
+else arrive at it independently.
 
 `-AllowDirty` overrides the clean-tree check, and produces a release that cannot be reproduced from
 its tag. Use it for throwaway builds, never for a published one.
 
+If the release workflow is active, a tag push does all of this: tests, build, attestation, publish.
+
 ### Recording the release
 
-This last step is the one that keeps the one-liner working. After the release is published, add it
-to `bootstrap/releases.json` and push:
+This last step is the one that keeps the one-liner working, and it is a command rather than a JSON
+snippet to hand-copy:
 
-```json
-{
-  "version": "v0.2.0",
-  "asset": "TerminalStudio-v0.2.0.zip",
-  "sha256": "the hash the builder printed",
-  "tagCommit": "the commit the tag points at",
-  "published": "2026-08-11"
-}
+```powershell
+& "$build/tools/New-TSRelease.ps1" -Version v0.3.0 -Force -UpdateManifest -Note 'uninstall, configure -Save, and the structured log.'
+git -C $build add bootstrap/releases.json
+git -C $build commit -m 'Record v0.3.0 in the release manifest'
+git -C $build push
 ```
 
-Then move `latest` to the new tag. Both edits are needed; a test asserts that `latest` names an entry
-that actually exists, because forgetting the second edit breaks the install line for everyone at once.
-
-Recording *after* publishing is deliberate. The hash describes the bytes actually uploaded, and since
-archives are not byte-reproducible, a rebuild of the same commit will not match. Never edit a recorded
-hash to make a rebuild agree — publish a new version instead.
+`-UpdateManifest` downloads the published asset, hashes those bytes, and refuses to write the entry
+unless they match the archive it just built. Recording *after* publishing is therefore not a
+convention anyone has to remember: before the release exists there is nothing to download, and the
+step fails. It writes the entry and moves `latest` in one pass, because a test asserts that `latest`
+names an entry that exists and forgetting the second edit breaks the install line for everyone at
+once.
 
 Until the entry is pushed, `irm ... | iex` keeps installing the previous release. That is the correct
-failure mode: stale beats broken.
+failure mode: stale beats broken. It is also exactly what happened to 0.2.0, which was written up,
+never tagged, and never served to anyone.
 
 ## Running the tests
 
@@ -279,7 +314,10 @@ failure mode: stale beats broken.
 
 The runner selects its suite by engine: compatibility tests run under both Windows PowerShell 5.1
 and PowerShell 7, unit tests run under 7 only. The CI matrix runs both legs on every push — see the
-status note at the top; it is not passing yet.
+status note at the top; the corrected workflow is staged and not yet active, so no run has passed.
+
+Lint runs the analyzer over `./src`, `./bootstrap`, `./tools` and `ts.ps1` with
+`PSScriptAnalyzerSettings.psd1`, and CI fails on any finding at Error, Warning or Information.
 
 ## Definition of success
 
@@ -304,14 +342,17 @@ budget out loud.
 - [x] Release builder and verified bootstrap
 - [x] Single-line install with no arguments
 - [x] `ts apply` — converge the file resources, journaled, idempotent, `-WhatIf`
-- [ ] Green CI
-- [ ] Journal-driven uninstall (no hand-maintained mirror of the installer)
-- [ ] A save path for `configure`
-- [ ] JSONL diagnostic logging with a correlation id
-- [ ] Have the release builder write the `releases.json` entry itself
-- [ ] Byte-reproducible archives (normalised timestamps)
+- [x] Journal-driven uninstall (no hand-maintained mirror of the installer)
+- [x] A save path for `configure`, without reformatting the documents it edits
+- [x] JSONL diagnostic logging with a correlation id
+- [x] Have the release builder write the `releases.json` entry itself
+- [x] Byte-reproducible archives (normalised timestamps)
+- [x] Build provenance attestation, verifiable without a signing key *(workflow staged)*
+- [ ] A green CI run *(the fix is staged at `.github/ci.yml`)*
+- [ ] Publish v0.3.0, so the one-liner stops serving v0.1.0
+- [ ] Run the integration suite on a disposable machine
 - [ ] Font installation, once the declared hashes are filled in
-- [ ] Signed releases with build provenance attestation
+- [ ] Commit the backdrop asset, or stop declaring it
 
 ## Decisions
 
@@ -321,6 +362,9 @@ budget out loud.
 - [ADR-0004 — Two surfaces, one definition](docs/adr/0004-two-surfaces-one-definition.md)
 - [ADR-0005 — Argument-free install through a committed release manifest](docs/adr/0005-argument-free-install-via-release-manifest.md)
 - [ADR-0006 — `apply` converges files and delegates everything else](docs/adr/0006-apply-converges-files-only.md)
+- [ADR-0007 — Releases are reproducible, attested, and recorded after publication](docs/adr/0007-releases-are-reproducible-and-attested.md)
+- [ADR-0008 — Uninstall is a backwards replay of the change journal](docs/adr/0008-uninstall-replays-the-journal.md)
+- [ADR-0009 — `configure -Save` edits one value in place and proves it](docs/adr/0009-configure-save-edits-one-value.md)
 - [Architecture overview](docs/architecture.md)
 
 ## License

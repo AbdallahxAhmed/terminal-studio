@@ -39,8 +39,17 @@ function Invoke-TSApply {
           - Every replaced file is copied to a backup directory first, and the
             backup path appears in both the report and the journal.
           - Every change appends one JSON line to an append-only journal, which is
-            what will make uninstall a replay rather than a second guess.
+            what makes uninstall a replay of recorded events rather than a second
+            guess at what happened. See Invoke-TSUninstall.
           - -WhatIf reports every intended change without making any of them.
+
+        WATCHING A RUN AFTER THE FACT
+
+        Set the TS_LOG_PATH environment variable to a file and each run appends
+        JSONL records to it, starting with one written before any resource is
+        touched. Every record carries the same run id as the journal lines from
+        that run, so the two can be joined. Unset, nothing is written anywhere and
+        no directory is created.
 
         A NOTE FOR CALLERS ABOUT -WhatIf
 
@@ -121,6 +130,19 @@ function Invoke-TSApply {
     # edits; with it, the set of files touched together can be identified and
     # reversed together.
     $runId = [guid]::NewGuid().ToString()
+
+    # Written before anything is touched, and deliberately not merged into the
+    # closing record. A run that throws halfway through leaves no closing record at
+    # all, and 'no evidence the run happened' is the least useful thing a log can
+    # say about the run someone is investigating.
+    Write-TSLog -Message "apply starting against $DesiredStatePath" -RunId $runId -Data @{
+        command      = 'apply'
+        phase        = 'start'
+        whatIf       = [bool] $WhatIfPreference
+        resources    = @($state.resources).Count
+        desiredState = $DesiredStatePath
+        journal      = $JournalPath
+    }
 
     $results = [System.Collections.Generic.List[object]]::new()
 
@@ -257,7 +279,18 @@ function Invoke-TSApply {
     }
 
     $changed = @($results | Where-Object { $_.Status -eq 'Pass' -and $_.Actual -notmatch '^already' }).Count
-    Write-TSLog -Message "apply run $runId touched $changed file(s) across $(@($state.resources).Count) resource(s)."
+    $failed = @($results | Where-Object { $_.Status -eq 'Fail' }).Count
+
+    Write-TSLog -Message "apply run $runId touched $changed file(s) across $(@($state.resources).Count) resource(s)." -RunId $runId -Data @{
+        command   = 'apply'
+        phase     = 'end'
+        whatIf    = [bool] $WhatIfPreference
+        changed   = $changed
+        failed    = $failed
+        resources = @($state.resources).Count
+        results   = $results.Count
+        journal   = $JournalPath
+    }
 
     $results
 }

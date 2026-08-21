@@ -1,0 +1,13 @@
+# Only GitHub Actions are listed, because they are the only dependency this
+# repository pins to a version. Pester, PSScriptAnalyzer, and everything in
+# desired-state are resolved from the gallery at run time, and a bot cannot bump
+# a version that is not written down.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
