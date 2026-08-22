@@ -8,7 +8,7 @@
     "Recording the hash in git is the integrity story. Substituting a release asset would require also editing this file, which leaves a commit behind.",
     "'tagCommit' is the commit the release tag points at, which is verifiable independently. It is not a claim that the archive is reproducible from that tree."
   ],
-  "latest": "v0.3.0",
+  "latest": "v0.3.1",
   "releases": [
     {
       "version": "v0.1.0",
@@ -23,6 +23,14 @@
       "asset": "TerminalStudio-v0.3.0.zip",
       "sha256": "8D3AF2BBFC82B886CA9E97E44C542A0C6A260CEC0CC999FD9AE3D81F7AF528C5",
       "tagCommit": "8b2c6ba5de8796361b00860ace24490e81c4bc7f",
+      "published": "2026-08-22",
+      "notes": "WPF interactive dashboard, uninstall, configure -Save, and the structured log."
+    },
+    {
+      "version": "v0.3.1",
+      "asset": "TerminalStudio-v0.3.1.zip",
+      "sha256": "E4D8C48AF9831CFCCBE793F3643CE45979CBA4C005CD563E55EDFFA635B9461E",
+      "tagCommit": "92b472ce7a0aa114cc27902d2ad96a7d34991c18",
       "published": "2026-08-22",
       "notes": "WPF interactive dashboard, uninstall, configure -Save, and the structured log."
     }
