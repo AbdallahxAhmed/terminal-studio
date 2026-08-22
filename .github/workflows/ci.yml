@@ -43,7 +43,11 @@ jobs:
               exit 0
           }
 
-          $findings = @($targets | ForEach-Object {Invoke-ScriptAnalyzer -Path $_ -Recurse -Settings ./PSScriptAnalyzerSettings.psd1})
+          $findings = @(
+              $targets | ForEach-Object {
+                  Invoke-ScriptAnalyzer -Path $_ -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+              }
+          )
 
           if ($findings) {
               $findings |
@@ -100,7 +104,7 @@ jobs:
           }
 
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck -AllowClobber
+          Install-Module Pester -MinimumVersion 5.5.0 -MaximumVersion 5.99.99 -Force -Scope CurrentUser -SkipPublisherCheck -AllowClobber
 
       - name: Run tests
         run: ./tests/Invoke-Tests.ps1
