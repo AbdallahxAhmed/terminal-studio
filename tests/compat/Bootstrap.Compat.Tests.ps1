@@ -17,6 +17,13 @@
     Stage 0 now has a second execution mode - a string piped into Invoke-Expression
     - and several assertions below exist because that mode breaks things which are
     perfectly safe in a script file.
+
+    Where an assertion is about what get.ps1 does, it is asked of the parser rather
+    than of the file's text. Two of the checks here were once written as text
+    matches and were red for months against a correct file, because get.ps1's header
+    explains the constraints it is under and therefore contains the words those
+    checks were banning. A test that fails on its subject's documentation offers two
+    repairs, and the cheaper one is deleting the documentation.
 #>
 
 BeforeAll {
@@ -66,8 +73,18 @@ Describe 'bootstrap/get.ps1' {
         # is now a string handed to Invoke-Expression, where whether the directive is
         # honoured, ignored, or fatal is not something to discover during someone's
         # install. A numeric comparison behaves identically in both modes.
+        #
+        # Asked of the parser. The text-matching version of this assertion failed on
+        # the two sentences in get.ps1's header that explain why there is no
+        # #Requires directive, which is a test whose only cheap repair is deleting
+        # the reasoning it was meant to protect. ScriptRequirements is the presence
+        # of a directive; the word is just a word.
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:bootstrapPath, [ref] $tokens, [ref] $errors)
+
         $script:text | Should -Match '\$PSVersionTable\.PSVersion\.Major'
-        $script:text | Should -Not -Match '#Requires'
+        $ast.ScriptRequirements | Should -BeNullOrEmpty
     }
 
     It 'does all of its work inside a function invoked on the last statement' {
@@ -128,10 +145,26 @@ Describe 'bootstrap/get.ps1' {
         #
         # Fetching that manifest from main concedes nothing, because get.ps1 is itself
         # fetched from main - anyone able to rewrite one can rewrite the other.
-        $offenders = @($script:text -split "`r?`n") |
-            Where-Object { $_ -match '/main/' -and $_ -notmatch 'releases\.json' }
+        #
+        # Comments are excluded, and that exclusion is the whole point rather than a
+        # convenience. The install one-liner fetches get.ps1 from main by design, so
+        # the header documenting it contains that URL three times. Reading the file as
+        # lines counted all three as violations, so this assertion was red for a file
+        # that was right, which is the same as having no assertion at all. The rule is
+        # about what the script fetches, so it is asked of the tokens the script is
+        # made of.
+        $tokens = $null
+        $errors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($script:bootstrapPath, [ref] $tokens, [ref] $errors)
 
-        @($offenders).Count | Should -Be 0 -Because "these lines reach into main for something other than the manifest: $($offenders -join ' | ')"
+        $offenders = @(
+            $tokens |
+                Where-Object { $_.Kind -ne [System.Management.Automation.Language.TokenKind]::Comment } |
+                Where-Object { $_.Text -match '/main/' -and $_.Text -notmatch 'releases\.json' } |
+                ForEach-Object { $_.Text }
+        )
+
+        @($offenders).Count | Should -Be 0 -Because "these tokens reach into main for something other than the manifest: $($offenders -join ' | ')"
     }
 
     It 'sets TLS 1.2 explicitly and avoids the Internet Explorer parser' {
