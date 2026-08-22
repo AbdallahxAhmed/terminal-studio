@@ -334,12 +334,24 @@ try {
             # is not the only thing that will read this archive.
             $relative = $path.Substring($staging.Length + 1).Replace('\', '/')
 
-            $entry = [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $null = [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
                 $zip,
                 $path,
                 $relative,
                 [System.IO.Compression.CompressionLevel]::Optimal)
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
 
+    # Timestamps are set in a second pass because CreateEntryFromFile in Create
+    # mode leaves the entry in a state where LastWriteTime cannot be assigned on
+    # some .NET runtimes. Reopening in Update mode avoids the restriction.
+    $zip = [System.IO.Compression.ZipFile]::Open($archive, 'Update')
+
+    try {
+        foreach ($entry in $zip.Entries) {
             $entry.LastWriteTime = $entryStamp
         }
     }
