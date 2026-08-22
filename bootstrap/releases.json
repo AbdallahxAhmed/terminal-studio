@@ -29,10 +29,10 @@
     {
       "version": "v0.3.1",
       "asset": "TerminalStudio-v0.3.1.zip",
-      "sha256": "2D6B784721C600D0B587101F35EAC11C3A8552766822E06D7BEBAF92EFEF1760",
-      "tagCommit": "4c0fc23e8bef39d2bf32070dad0ccb9a52912bd5",
+      "sha256": "4A83FA8DB2204DEA19CD9C9390EA27832103DC701542A4A674CD6ECCBB83872C",
+      "tagCommit": "854f2817d443ec9e8bc6b1187ca17e12423fbb59",
       "published": "2026-08-22",
-      "notes": "WPF interactive dashboard with instant theme sync, sibling cleanup, and actions healing."
+      "notes": "WPF interactive dashboard with instant live theme synchronization across profiles and defaults."
     }
   ]
 }
