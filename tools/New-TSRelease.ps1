@@ -279,12 +279,7 @@ foreach ($assembly in @('System.IO.Compression', 'System.IO.Compression.FileSyst
     }
 }
 
-$staging = Join-Path -Path $env:TEMP -ChildPath ('ts-release-' + [Guid]::NewGuid().ToString('N'))
-$null = New-Item -Path $staging -ItemType Directory -Force
-# Resolve the staging directory to its canonical long path, avoiding 8.3 short-name
-# differences in $env:TEMP (e.g. ABDALL~1 vs Abdallah_Ahmed) that would corrupt
-# relative path calculations.
-$staging = (Get-Item -LiteralPath $staging).FullName
+$staging = (New-Item -Path (Join-Path -Path $env:TEMP -ChildPath ('ts-release-' + [Guid]::NewGuid().ToString('N'))) -ItemType Directory -Force).FullName
 
 try {
     foreach ($item in $payload) {
@@ -330,13 +325,19 @@ try {
     $paths = [string[]] @(Get-ChildItem -LiteralPath $staging -Recurse -File | ForEach-Object { $_.FullName })
     [Array]::Sort($paths, [System.StringComparer]::Ordinal)
 
+    $stagingPrefix = $staging.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+
     $zip = [System.IO.Compression.ZipFile]::Open($archive, 'Create')
 
     try {
         foreach ($path in $paths) {
             # Forward slashes: the zip specification says so, and Windows Terminal
             # is not the only thing that will read this archive.
-            $relative = $path.Substring($staging.Length + 1).Replace('\', '/')
+            if (-not $path.StartsWith($stagingPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Path '$path' is not under staging prefix '$stagingPrefix'."
+            }
+
+            $relative = $path.Substring($stagingPrefix.Length).Replace('\', '/')
 
             $null = [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
                 $zip,
@@ -359,8 +360,9 @@ try {
             $entry.LastWriteTime = $entryStamp
         }
 
-        if (-not $zip.GetEntry('ts.ps1')) {
-            throw "Archive assembly defect: ts.ps1 is not at the archive root of $archive. Entries found: $(($zip.Entries | Select-Object -First 5 -ExpandProperty FullName) -join ', ')"
+        $entryNames = @($zip.Entries | ForEach-Object { $_.FullName })
+        if ($entryNames -notcontains 'ts.ps1') {
+            throw "Archive root must contain 'ts.ps1', but found entries: $($entryNames -join ', ')"
         }
     }
     finally {
