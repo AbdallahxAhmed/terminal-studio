@@ -183,8 +183,10 @@ Describe 'Invoke-TSApply' {
         $payload = New-TSTestPayload -Root $script:root -SourceContent '__ABSENT__' -Destination $script:destination
 
         $results = $null
-        { $results = @(Invoke-TSApply -DesiredStatePath $payload.StatePath -PayloadRoot $payload.PayloadRoot -JournalPath $payload.JournalPath -BackupRoot $payload.BackupRoot) } |
-            Should -Not -Throw
+        $caughtException = $null
+        try { $results = @(Invoke-TSApply -DesiredStatePath $payload.StatePath -PayloadRoot $payload.PayloadRoot -JournalPath $payload.JournalPath -BackupRoot $payload.BackupRoot) }
+        catch { $caughtException = $_ }
+        $caughtException | Should -BeNullOrEmpty
 
         $results[0].Status | Should -Be 'Fail'
         $results[0].Remediation | Should -Not -BeNullOrEmpty
@@ -200,7 +202,7 @@ Describe 'Invoke-TSApply' {
         $results = @(Invoke-TSApply -DesiredStatePath $payload.StatePath -PayloadRoot $payload.PayloadRoot -JournalPath $payload.JournalPath -BackupRoot $payload.BackupRoot)
 
         $results[0].Status | Should -Be 'Fail'
-        $results[0].Actual | Should -Match 'does not match'
+        $results[0].Actual | Should -Match 'sha256'
         Test-Path -LiteralPath $script:destination | Should -BeFalse
     }
 

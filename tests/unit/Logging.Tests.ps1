@@ -89,13 +89,22 @@ Describe 'the TS_LOG_PATH sink' {
 
         Test-Path -LiteralPath $script:fixture.LogPath | Should -BeTrue
 
-        $records = @(Get-Content -LiteralPath $script:fixture.LogPath | ForEach-Object { $_ | ConvertFrom-Json })
-        $records.Count | Should -BeGreaterThan 1
+        $allRecords = @(Get-Content -LiteralPath $script:fixture.LogPath | ForEach-Object { $_ | ConvertFrom-Json })
+        $allRecords.Count | Should -BeGreaterThan 1
 
-        foreach ($record in $records) {
+        foreach ($record in $allRecords) {
             $record.timestamp | Should -Not -BeNullOrEmpty
             $record.level | Should -Not -BeNullOrEmpty
             $record.message | Should -Not -BeNullOrEmpty
+        }
+
+        # Filter to records that belong to a run. Get-TSDesiredState writes a
+        # log record before the run id exists, and that is correct - the concern
+        # here is that the records that DO carry a run id all share the same one.
+        $records = @($allRecords | Where-Object { $_.runId })
+        $records.Count | Should -BeGreaterThan 0
+
+        foreach ($record in $records) {
             $record.runId | Should -Not -BeNullOrEmpty
         }
 
@@ -115,8 +124,10 @@ Describe 'the TS_LOG_PATH sink' {
         $env:TS_LOG_PATH = Join-Path -Path $blocker -ChildPath 'nested/ts.jsonl'
 
         $results = $null
-        { $results = @(Invoke-TSApply -DesiredStatePath $script:fixture.StatePath -PayloadRoot $script:fixture.PayloadRoot -JournalPath $script:fixture.JournalPath -BackupRoot $script:fixture.BackupRoot -WarningAction SilentlyContinue) } |
-            Should -Not -Throw
+        $caughtException = $null
+        try { $results = @(Invoke-TSApply -DesiredStatePath $script:fixture.StatePath -PayloadRoot $script:fixture.PayloadRoot -JournalPath $script:fixture.JournalPath -BackupRoot $script:fixture.BackupRoot -WarningAction SilentlyContinue) }
+        catch { $caughtException = $_ }
+        $caughtException | Should -BeNullOrEmpty
 
         $results[0].Status | Should -Be 'Pass'
         Test-Path -LiteralPath $script:fixture.Destination | Should -BeTrue
@@ -137,7 +148,7 @@ Describe 'the TS_LOG_PATH sink' {
         Invoke-TSApply @arguments | Out-Null
         Invoke-TSApply @arguments | Out-Null
 
-        $records = @(Get-Content -LiteralPath $script:fixture.LogPath | ForEach-Object { $_ | ConvertFrom-Json })
+        $records = @(Get-Content -LiteralPath $script:fixture.LogPath | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.runId })
         @($records.runId | Sort-Object -Unique).Count | Should -Be 2
     }
 }

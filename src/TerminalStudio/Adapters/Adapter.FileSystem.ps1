@@ -244,7 +244,7 @@ function New-TSDirectory {
         [string] $Path
     )
 
-    if (Test-Path -LiteralPath $Path) {
+    if (Test-Path -LiteralPath $Path -PathType Container) {
         return $false
     }
 

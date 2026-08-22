@@ -192,8 +192,9 @@ function Invoke-TSApply {
 
                 $source = Join-Path -Path $PayloadRoot -ChildPath $resource.source
                 $destination = Expand-TSPath -Path $resource.destination
+                $declared = if ($names -contains 'sha256') { [string] $resource.sha256 } else { '' }
 
-                $results.Add((Sync-TSManagedFile -Name "Prompt theme: $($resource.name)" -Kind $kind -Source $source -Destination $destination @shared))
+                $results.Add((Sync-TSManagedFile -Name "Prompt theme: $($resource.name)" -Kind $kind -Source $source -Destination $destination -ExpectedSha256 $declared @shared))
             }
 
             'terminal.asset' {

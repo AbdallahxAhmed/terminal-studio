@@ -28,7 +28,7 @@ Describe 'module surface' {
 
     It 'exports exactly the commands it claims' {
         @(Get-Command -Module 'TerminalStudio' | ForEach-Object { $_.Name } | Sort-Object) |
-            Should -Be @('Get-TSControl', 'Get-TSPlan', 'Invoke-TSApply', 'Invoke-TSDoctor')
+            Should -Be @('Get-TSControl', 'Get-TSPlan', 'Invoke-TSApply', 'Invoke-TSDoctor', 'Invoke-TSUninstall', 'Set-TSControl')
     }
 
     It 'keeps renderers out of the public surface' {
