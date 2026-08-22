@@ -29,10 +29,10 @@
     {
       "version": "v0.3.1",
       "asset": "TerminalStudio-v0.3.1.zip",
-      "sha256": "71243A170BFB21CCCC9B1EDA1DF1AA2C89B0E1D682F2DAAECC472653156AA16A",
-      "tagCommit": "ce16327ddcf2b2c4599f7567050fd3bc87a7560d",
+      "sha256": "C368C1916FE054562D7722F37E4A4BCE081BA0040F8D959F22661378640C5DA6",
+      "tagCommit": "bcc19d8586429416cb6eed9a39fe77ab46845c92",
       "published": "2026-08-22",
-      "notes": "WPF interactive dashboard with instant theme sync and non-blocking UI pump."
+      "notes": "WPF interactive dashboard with instant theme sync, sibling cleanup, and dynamic fragment resolution."
     }
   ]
 }
