@@ -210,12 +210,27 @@ function Show-TSMainWindow {
 
     $null = $root.Children.Add($consoleBorder)
 
+    # Dispatcher pump to keep UI responsive and prevent (Not Responding) during operations
+    $doEvents = {
+        try {
+            $frame = New-Object System.Windows.Threading.DispatcherFrame
+            $op = [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action[object]]{ param($f) $f.Continue = $false },
+                $frame
+            )
+            [System.Windows.Threading.Dispatcher]::PushFrame($frame)
+        }
+        catch {}
+    }
+
     # Helper scriptblock to log output to the console
     $logOutput = {
         param([string] $msg)
         $timestamp = (Get-Date).ToString('HH:mm:ss')
         $consoleText.AppendText("[$timestamp] $msg`n")
         $consoleScroll.ScrollToEnd()
+        & $doEvents
     }
 
     $null = $clearBtn.Add_Click({
@@ -444,25 +459,40 @@ function Show-TSMainWindow {
 
         & $logOutput "Saving $($changedList.Count) configuration item(s)..."
         foreach ($c in $changedList) {
-            Set-TSControl -Control $c @commonArgs | Out-Null
-            & $logOutput "  -> Updated $($c.Label) to $($c.Value)"
+            try {
+                $res = Set-TSControl -Id $c.Id -Value $c.Value @commonArgs
+                & $logOutput "  -> [$($res.Status)] $($c.Label): $($res.Actual)"
+            }
+            catch {
+                & $logOutput "  -> [Fail] $($c.Label): $($_.Exception.Message)"
+            }
         }
         & $logOutput "Successfully saved $($changedList.Count) setting(s) to desired state."
         return $true
     }
 
     $null = $btnSaveOnly.Add_Click({
-        & $saveCurrentConfig | Out-Null
+        try {
+            & $saveCurrentConfig | Out-Null
+        }
+        catch {
+            & $logOutput "Save failed: $($_.Exception.Message)"
+        }
     })
 
     $null = $btnSaveApply.Add_Click({
-        & $saveCurrentConfig | Out-Null
-        & $logOutput 'Running Apply now...'
-        $results = @(Invoke-TSApply @commonArgs)
-        foreach ($r in $results) {
-            & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+        try {
+            $saved = & $saveCurrentConfig
+            & $logOutput 'Running Apply now...'
+            $results = @(Invoke-TSApply @commonArgs)
+            foreach ($r in $results) {
+                & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+            }
+            & $logOutput 'Apply complete! Terminal environment converged.'
         }
-        & $logOutput 'Apply complete!'
+        catch {
+            & $logOutput "Apply error: $($_.Exception.Message)"
+        }
     })
 
     $null = $tweaksDock.Children.Add($tweaksScroll)
@@ -600,39 +630,59 @@ function Show-TSMainWindow {
 
     # Action event bindings
     $null = $btnApply.Add_Click({
-        & $logOutput 'Starting Apply...'
-        $results = @(Invoke-TSApply @commonArgs)
-        foreach ($r in $results) {
-            & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+        try {
+            & $logOutput 'Starting Apply...'
+            $results = @(Invoke-TSApply @commonArgs)
+            foreach ($r in $results) {
+                & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+            }
+            & $logOutput 'Apply execution finished.'
         }
-        & $logOutput 'Apply execution finished.'
+        catch {
+            & $logOutput "Apply error: $($_.Exception.Message)"
+        }
     })
 
     $null = $btnApplyWhatIf.Add_Click({
-        & $logOutput 'Running Apply dry-run (-WhatIf)...'
-        $results = @(Invoke-TSApply @commonArgs -WhatIf)
-        foreach ($r in $results) {
-            & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+        try {
+            & $logOutput 'Running Apply dry-run (-WhatIf)...'
+            $results = @(Invoke-TSApply @commonArgs -WhatIf)
+            foreach ($r in $results) {
+                & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+            }
+            & $logOutput 'Dry-run finished. Nothing was modified.'
         }
-        & $logOutput 'Dry-run finished. Nothing was modified.'
+        catch {
+            & $logOutput "Dry-run error: $($_.Exception.Message)"
+        }
     })
 
     $null = $btnRestore.Add_Click({
-        & $logOutput 'Starting Rollback / Restore (replaying change journal)...'
-        $results = @(Invoke-TSUninstall @commonArgs)
-        foreach ($r in $results) {
-            & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+        try {
+            & $logOutput 'Starting Rollback / Restore (replaying change journal)...'
+            $results = @(Invoke-TSUninstall @commonArgs)
+            foreach ($r in $results) {
+                & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+            }
+            & $logOutput 'Rollback finished.'
         }
-        & $logOutput 'Rollback finished.'
+        catch {
+            & $logOutput "Rollback error: $($_.Exception.Message)"
+        }
     })
 
     $null = $btnRestoreWhatIf.Add_Click({
-        & $logOutput 'Previewing Rollback (-WhatIf)...'
-        $results = @(Invoke-TSUninstall @commonArgs -WhatIf)
-        foreach ($r in $results) {
-            & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+        try {
+            & $logOutput 'Previewing Rollback (-WhatIf)...'
+            $results = @(Invoke-TSUninstall @commonArgs -WhatIf)
+            foreach ($r in $results) {
+                & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
+            }
+            & $logOutput 'Rollback preview complete. Nothing was changed.'
         }
-        & $logOutput 'Rollback preview complete. Nothing was changed.'
+        catch {
+            & $logOutput "Rollback preview error: $($_.Exception.Message)"
+        }
     })
 
     $null = $opsDock.Children.Add($opsScroll)
@@ -678,81 +728,86 @@ function Show-TSMainWindow {
     $doctorScroll.Content = $doctorStack
 
     $null = $btnRunDoctor.Add_Click({
-        & $logOutput 'Running Doctor diagnostics...'
-        $doctorStack.Children.Clear()
+        try {
+            & $logOutput 'Running Doctor diagnostics...'
+            $doctorStack.Children.Clear()
 
-        $results = @(Invoke-TSDoctor @commonArgs)
-        $passCount = @($results | Where-Object { $_.Status -eq 'Pass' }).Count
-        $warnCount = @($results | Where-Object { $_.Status -eq 'Warn' }).Count
-        $failCount = @($results | Where-Object { $_.Status -eq 'Fail' }).Count
-        $skipCount = @($results | Where-Object { $_.Status -eq 'Skip' }).Count
+            $results = @(Invoke-TSDoctor @commonArgs)
+            $passCount = @($results | Where-Object { $_.Status -eq 'Pass' }).Count
+            $warnCount = @($results | Where-Object { $_.Status -eq 'Warn' }).Count
+            $failCount = @($results | Where-Object { $_.Status -eq 'Fail' }).Count
+            $skipCount = @($results | Where-Object { $_.Status -eq 'Skip' }).Count
 
-        $doctorSummary.Text = "$passCount Passed | $warnCount Warnings | $failCount Failed | $skipCount Skipped"
-        & $logOutput "Doctor report: $passCount Passed, $warnCount Warnings, $failCount Failed."
+            $doctorSummary.Text = "$passCount Passed | $warnCount Warnings | $failCount Failed | $skipCount Skipped"
+            & $logOutput "Doctor report: $passCount Passed, $warnCount Warnings, $failCount Failed."
 
-        foreach ($r in $results) {
-            $badgeBg = switch ($r.Status) {
-                'Pass' { $accentGreen }
-                'Warn' { $accentWarn }
-                'Fail' { $accentRed }
-                default { $borderDark }
+            foreach ($r in $results) {
+                $badgeBg = switch ($r.Status) {
+                    'Pass' { $accentGreen }
+                    'Warn' { $accentWarn }
+                    'Fail' { $accentRed }
+                    default { $borderDark }
+                }
+
+                $card = New-Object System.Windows.Controls.Border
+                $card.Background = $bgCard
+                $card.BorderBrush = $borderDark
+                $card.BorderThickness = New-Object System.Windows.Thickness 1
+                $card.CornerRadius = New-Object System.Windows.CornerRadius 5
+                $card.Padding = New-Object System.Windows.Thickness 10, 6, 10, 6
+                $card.Margin = New-Object System.Windows.Thickness 0, 0, 0, 4
+
+                $cStack = New-Object System.Windows.Controls.StackPanel
+
+                $hDock = New-Object System.Windows.Controls.DockPanel
+
+                $badge = New-Object System.Windows.Controls.Border
+                $badge.Background = $badgeBg
+                $badge.CornerRadius = New-Object System.Windows.CornerRadius 4
+                $badge.Padding = New-Object System.Windows.Thickness 6, 2, 6, 2
+                $badge.Margin = New-Object System.Windows.Thickness 0, 0, 8, 0
+                [System.Windows.Controls.DockPanel]::SetDock($badge, [System.Windows.Controls.Dock]::Left)
+
+                $bText = New-Object System.Windows.Controls.TextBlock
+                $bText.Text = [string] $r.Status
+                $bText.FontSize = 10
+                $bText.FontWeight = [System.Windows.FontWeights]::Bold
+                $bText.Foreground = [System.Windows.Media.Brushes]::White
+                $badge.Child = $bText
+                $null = $hDock.Children.Add($badge)
+
+                $nameText = New-Object System.Windows.Controls.TextBlock
+                $nameText.Text = [string] $r.Name
+                $nameText.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $nameText.Foreground = $textLight
+                $nameText.FontSize = 12
+                $null = $hDock.Children.Add($nameText)
+
+                $null = $cStack.Children.Add($hDock)
+
+                $actText = New-Object System.Windows.Controls.TextBlock
+                $actText.Text = [string] $r.Actual
+                $actText.Foreground = $textMuted
+                $actText.FontSize = 11
+                $actText.Margin = New-Object System.Windows.Thickness 0, 2, 0, 0
+                $null = $cStack.Children.Add($actText)
+
+                if ($r.Remediation) {
+                    $remText = New-Object System.Windows.Controls.TextBlock
+                    $remText.Text = "-> Fix: $($r.Remediation)"
+                    $remText.Foreground = $accentGold
+                    $remText.FontSize = 10.5
+                    $remText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+                    $remText.Margin = New-Object System.Windows.Thickness 0, 3, 0, 0
+                    $null = $cStack.Children.Add($remText)
+                }
+
+                $card.Child = $cStack
+                $null = $doctorStack.Children.Add($card)
             }
-
-            $card = New-Object System.Windows.Controls.Border
-            $card.Background = $bgCard
-            $card.BorderBrush = $borderDark
-            $card.BorderThickness = New-Object System.Windows.Thickness 1
-            $card.CornerRadius = New-Object System.Windows.CornerRadius 5
-            $card.Padding = New-Object System.Windows.Thickness 10, 6, 10, 6
-            $card.Margin = New-Object System.Windows.Thickness 0, 0, 0, 4
-
-            $cStack = New-Object System.Windows.Controls.StackPanel
-
-            $hDock = New-Object System.Windows.Controls.DockPanel
-
-            $badge = New-Object System.Windows.Controls.Border
-            $badge.Background = $badgeBg
-            $badge.CornerRadius = New-Object System.Windows.CornerRadius 4
-            $badge.Padding = New-Object System.Windows.Thickness 6, 2, 6, 2
-            $badge.Margin = New-Object System.Windows.Thickness 0, 0, 8, 0
-            [System.Windows.Controls.DockPanel]::SetDock($badge, [System.Windows.Controls.Dock]::Left)
-
-            $bText = New-Object System.Windows.Controls.TextBlock
-            $bText.Text = [string] $r.Status
-            $bText.FontSize = 10
-            $bText.FontWeight = [System.Windows.FontWeights]::Bold
-            $bText.Foreground = [System.Windows.Media.Brushes]::White
-            $badge.Child = $bText
-            $null = $hDock.Children.Add($badge)
-
-            $nameText = New-Object System.Windows.Controls.TextBlock
-            $nameText.Text = [string] $r.Name
-            $nameText.FontWeight = [System.Windows.FontWeights]::SemiBold
-            $nameText.Foreground = $textLight
-            $nameText.FontSize = 12
-            $null = $hDock.Children.Add($nameText)
-
-            $null = $cStack.Children.Add($hDock)
-
-            $actText = New-Object System.Windows.Controls.TextBlock
-            $actText.Text = [string] $r.Actual
-            $actText.Foreground = $textMuted
-            $actText.FontSize = 11
-            $actText.Margin = New-Object System.Windows.Thickness 0, 2, 0, 0
-            $null = $cStack.Children.Add($actText)
-
-            if ($r.Remediation) {
-                $remText = New-Object System.Windows.Controls.TextBlock
-                $remText.Text = "-> Fix: $($r.Remediation)"
-                $remText.Foreground = $accentGold
-                $remText.FontSize = 10.5
-                $remText.TextWrapping = [System.Windows.TextWrapping]::Wrap
-                $remText.Margin = New-Object System.Windows.Thickness 0, 3, 0, 0
-                $null = $cStack.Children.Add($remText)
-            }
-
-            $card.Child = $cStack
-            $null = $doctorStack.Children.Add($card)
+        }
+        catch {
+            & $logOutput "Doctor error: $($_.Exception.Message)"
         }
     })
 
