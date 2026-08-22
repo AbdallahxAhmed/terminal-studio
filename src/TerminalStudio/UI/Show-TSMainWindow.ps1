@@ -471,47 +471,98 @@ function Show-TSMainWindow {
         return $true
     }
 
-    $clearCompetingOverrides = {
+    $syncLiveSettings = {
+        param([string] $schemeName)
+        if (-not $schemeName) {
+            $schemeCtrl = @(Get-TSControl | Where-Object { $_.Id -eq 'scheme' })
+            $schemeName = if ($schemeCtrl) { [string] $schemeCtrl[0].Value } else { 'andalus' }
+        }
+
         try {
-            $settingsPath = Get-TSTerminalSettingsPath
-            if ($settingsPath -and (Test-Path -LiteralPath $settingsPath)) {
+            $localApp = [Environment]::GetFolderPath('LocalApplicationData')
+            $packages = @(
+                'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe'
+                'Microsoft.WindowsTerminal_8wekyb3d8bbwe'
+            )
+
+            $schemesData = @{
+                'andalus' = [PSCustomObject]@{
+                    name = 'Andalus'
+                    background = '#0B1220'; foreground = '#EDE0C8'; cursorColor = '#D4A537'; selectionBackground = '#2D5D8F'
+                    black = '#0B1220'; red = '#C0453C'; green = '#5F9E6E'; yellow = '#D4A537'; blue = '#2D5D8F'; purple = '#7B4B8A'; cyan = '#2E9E93'; white = '#EDE0C8'
+                    brightBlack = '#3A4358'; brightRed = '#E06A5E'; brightGreen = '#8FBF7A'; brightYellow = '#F0C75E'; brightBlue = '#5B8FCC'; brightPurple = '#B58AC4'; brightCyan = '#49C5B6'; brightWhite = '#FBF3E2'
+                }
+                'volcanic' = [PSCustomObject]@{
+                    name = 'Volcanic Heat'
+                    background = '#1A090D'; foreground = '#FAD8D6'; cursorColor = '#FF7A5C'; selectionBackground = '#5A3A3A'
+                    black = '#1A090D'; red = '#FF4E32'; green = '#C7D96D'; yellow = '#FFB627'; blue = '#6E8CA0'; purple = '#D96BA0'; cyan = '#8FBFB0'; white = '#FAD8D6'
+                    brightBlack = '#5A3A3A'; brightRed = '#FF7A5C'; brightGreen = '#DDEE8E'; brightYellow = '#FFD166'; brightBlue = '#93AFC2'; brightPurple = '#F09AC4'; brightCyan = '#B3DDD0'; brightWhite = '#FFF3F1'
+                }
+            }
+
+            $activeKey = if ($schemeName -like '*volcanic*') { 'volcanic' } else { 'andalus' }
+            $activeSchemeObj = $schemesData[$activeKey]
+            $activeSchemeTitle = $activeSchemeObj.name
+
+            foreach ($pkg in $packages) {
+                $settingsPath = Join-Path -Path $localApp -ChildPath "Packages\$pkg\LocalState\settings.json"
+                if (-not (Test-Path -LiteralPath $settingsPath)) { continue }
+
                 $content = Get-Content -LiteralPath $settingsPath -Raw -Encoding utf8
                 $json = $content | ConvertFrom-Json
-                $modified = $false
-                if ($json.profiles -and $json.profiles.list) {
-                    foreach ($p in $json.profiles.list) {
-                        if ($p.guid -eq '{574e775e-4f2a-5b96-ac1e-a2962a402336}' -or $p.name -like '*PowerShell*') {
-                            if ($p.PSObject.Properties['colorScheme']) {
-                                $p.PSObject.Properties.Remove('colorScheme')
-                                $modified = $true
+
+                # 1. Update schemes table with canonical scheme definitions
+                $existingSchemes = @($json.schemes | Where-Object { $_.name -notin @('Andalus', 'Volcanic Heat', 'Volcanic Heat (modified)') })
+                $json.schemes = @($existingSchemes) + @($schemesData['andalus'], $schemesData['volcanic'])
+
+                # 2. Update profiles to use the chosen scheme live
+                if ($json.profiles) {
+                    if ($json.profiles.defaults) {
+                        if ($json.profiles.defaults.PSObject.Properties['colorScheme']) {
+                            $json.profiles.defaults.colorScheme = $activeSchemeTitle
+                        } else {
+                            $json.profiles.defaults | Add-Member -NotePropertyName 'colorScheme' -NotePropertyValue $activeSchemeTitle -Force
+                        }
+                    }
+                    if ($json.profiles.list) {
+                        foreach ($prof in $json.profiles.list) {
+                            if ($prof.PSObject.Properties['colorScheme']) {
+                                $prof.colorScheme = $activeSchemeTitle
+                            } else {
+                                $prof | Add-Member -NotePropertyName 'colorScheme' -NotePropertyValue $activeSchemeTitle -Force
                             }
-                            if ($p.PSObject.Properties['font']) {
-                                $p.PSObject.Properties.Remove('font')
-                                $modified = $true
+
+                            if ($activeKey -eq 'volcanic') {
+                                if ($prof.PSObject.Properties['backgroundImage']) {
+                                    $prof.PSObject.Properties.Remove('backgroundImage')
+                                }
+                                if ($prof.PSObject.Properties['padding']) {
+                                    $prof.padding = '8, 8, 8, 8'
+                                }
                             }
                         }
                     }
                 }
+
+                # 3. Heal any dangling setColorScheme actions
                 if ($json.actions) {
-                    $known = @($json.schemes.name) + @('Andalus', 'Volcanic Heat', 'Campbell', 'One Half Dark', 'One Half Light', 'Solarized Dark', 'Solarized Light', 'Tango Dark', 'Tango Light', 'Vintage')
-                    $valid = [System.Collections.Generic.List[object]]::new()
+                    $validSchemes = @($json.schemes.name) + @('Andalus', 'Volcanic Heat', 'Campbell', 'One Half Dark', 'One Half Light', 'Solarized Dark', 'Solarized Light', 'Tango Dark', 'Tango Light', 'Vintage')
+                    $validActions = [System.Collections.Generic.List[object]]::new()
                     foreach ($a in $json.actions) {
-                        if ($a.command -and $a.command.action -eq 'setColorScheme' -and $known -notcontains $a.command.colorScheme) {
-                            $modified = $true
+                        if ($a.command -and $a.command.action -eq 'setColorScheme' -and $validSchemes -notcontains $a.command.colorScheme) {
                             continue
                         }
-                        $valid.Add($a)
+                        $validActions.Add($a)
                     }
-                    $json.actions = $valid
+                    $json.actions = $validActions
                 }
-                if ($modified) {
-                    $json | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsPath -Encoding utf8
-                    & $logOutput '  -> Cleared settings.json local overrides and healed action list.'
-                }
+
+                $json | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsPath -Encoding utf8
+                & $logOutput "  -> Live synchronized '$activeSchemeTitle' directly to Windows Terminal settings."
             }
         }
         catch {
-            & $logOutput "  -> Note: could not auto-clear settings.json overrides: $($_.Exception.Message)"
+            & $logOutput "  -> Live sync note: $($_.Exception.Message)"
         }
     }
 
@@ -532,7 +583,7 @@ function Show-TSMainWindow {
             foreach ($r in $results) {
                 & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
             }
-            & $clearCompetingOverrides
+            & $syncLiveSettings
             & $logOutput 'Apply complete! Terminal environment converged.'
         }
         catch {
@@ -681,7 +732,7 @@ function Show-TSMainWindow {
             foreach ($r in $results) {
                 & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
             }
-            & $clearCompetingOverrides
+            & $syncLiveSettings
             & $logOutput 'Apply execution finished.'
         }
         catch {
