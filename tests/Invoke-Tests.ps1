@@ -21,6 +21,20 @@
                     #Requires -Version 7.4. Attempting it under Desktop would fail
                     for the wrong reason and teach the team to ignore red builds.
 
+    Framework selection:
+
+      The Pester requirement is a range - 5.5.0 or later, below 6.0.0 - and not a
+      floor. A floor is what let a machine install the newest Pester and run this
+      suite against a major version these tests were never written for. That does
+      not present as an incompatibility error. It presents as most of the suite
+      failing in ways indistinguishable from product defects, because the
+      framework stopped sharing state between its discovery and run phases in the
+      way the tests assume. A harness that may silently change under the tests
+      cannot answer the only question a red build is for.
+
+      The version that satisfies the range is then imported with -RequiredVersion,
+      so the version that was checked is the version that runs.
+
 .PARAMETER OutputPath
     NUnit results file for CI to upload.
 
@@ -42,16 +56,26 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$minimumPester = [version] '5.5.0'
+$exclusivePesterCeiling = [version] '6.0.0'
+
 $available = Get-Module -ListAvailable -Name 'Pester' |
-    Where-Object { $_.Version -ge [version] '5.5.0' } |
+    Where-Object { $_.Version -ge $minimumPester -and $_.Version -lt $exclusivePesterCeiling } |
     Sort-Object -Property Version -Descending |
     Select-Object -First 1
 
 if (-not $available) {
-    throw 'Pester 5.5.0 or later is required. Install-Module -Name Pester -MinimumVersion 5.5.0 -Scope CurrentUser -SkipPublisherCheck'
+    $installed = @(Get-Module -ListAvailable -Name 'Pester' | ForEach-Object { $_.Version.ToString() })
+    $found = if ($installed.Count -gt 0) { $installed -join ', ' } else { 'none' }
+
+    throw "Pester $minimumPester or later, below $exclusivePesterCeiling, is required. Installed: $found. Install-Module -Name Pester -MinimumVersion 5.5.0 -MaximumVersion 5.99.99 -Scope CurrentUser -SkipPublisherCheck -Force"
 }
 
-Import-Module -Name 'Pester' -MinimumVersion '5.5.0' -Force
+Import-Module -Name 'Pester' -RequiredVersion $available.Version -Force
+
+# Printed, not implied. The first thing a failure report needs is what produced
+# it, and a report that omits the framework version cannot be triaged from it.
+Write-Host "Pester $($available.Version) on PowerShell $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)"
 
 $suites = @(Join-Path -Path $PSScriptRoot -ChildPath 'compat')
 
