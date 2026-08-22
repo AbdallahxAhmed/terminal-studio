@@ -492,9 +492,21 @@ function Show-TSMainWindow {
                         }
                     }
                 }
+                if ($json.actions) {
+                    $known = @($json.schemes.name) + @('Andalus', 'Volcanic Heat', 'Campbell', 'One Half Dark', 'One Half Light', 'Solarized Dark', 'Solarized Light', 'Tango Dark', 'Tango Light', 'Vintage')
+                    $valid = [System.Collections.Generic.List[object]]::new()
+                    foreach ($a in $json.actions) {
+                        if ($a.command -and $a.command.action -eq 'setColorScheme' -and $known -notcontains $a.command.colorScheme) {
+                            $modified = $true
+                            continue
+                        }
+                        $valid.Add($a)
+                    }
+                    $json.actions = $valid
+                }
                 if ($modified) {
                     $json | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsPath -Encoding utf8
-                    & $logOutput '  -> Cleared settings.json local overrides: theme applies instantly.'
+                    & $logOutput '  -> Cleared settings.json local overrides and healed action list.'
                 }
             }
         }
