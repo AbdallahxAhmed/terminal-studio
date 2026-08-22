@@ -471,6 +471,38 @@ function Show-TSMainWindow {
         return $true
     }
 
+    $clearCompetingOverrides = {
+        try {
+            $settingsPath = Get-TSTerminalSettingsPath
+            if ($settingsPath -and (Test-Path -LiteralPath $settingsPath)) {
+                $content = Get-Content -LiteralPath $settingsPath -Raw -Encoding utf8
+                $json = $content | ConvertFrom-Json
+                $modified = $false
+                if ($json.profiles -and $json.profiles.list) {
+                    foreach ($p in $json.profiles.list) {
+                        if ($p.guid -eq '{574e775e-4f2a-5b96-ac1e-a2962a402336}' -or $p.name -like '*PowerShell*') {
+                            if ($p.PSObject.Properties['colorScheme']) {
+                                $p.PSObject.Properties.Remove('colorScheme')
+                                $modified = $true
+                            }
+                            if ($p.PSObject.Properties['font']) {
+                                $p.PSObject.Properties.Remove('font')
+                                $modified = $true
+                            }
+                        }
+                    }
+                }
+                if ($modified) {
+                    $json | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsPath -Encoding utf8
+                    & $logOutput '  -> Cleared settings.json local overrides: theme applies instantly.'
+                }
+            }
+        }
+        catch {
+            & $logOutput "  -> Note: could not auto-clear settings.json overrides: $($_.Exception.Message)"
+        }
+    }
+
     $null = $btnSaveOnly.Add_Click({
         try {
             & $saveCurrentConfig | Out-Null
@@ -488,6 +520,7 @@ function Show-TSMainWindow {
             foreach ($r in $results) {
                 & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
             }
+            & $clearCompetingOverrides
             & $logOutput 'Apply complete! Terminal environment converged.'
         }
         catch {
@@ -636,6 +669,7 @@ function Show-TSMainWindow {
             foreach ($r in $results) {
                 & $logOutput "[$($r.Status)] $($r.Name): $($r.Actual)"
             }
+            & $clearCompetingOverrides
             & $logOutput 'Apply execution finished.'
         }
         catch {
