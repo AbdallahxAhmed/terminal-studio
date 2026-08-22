@@ -1,7 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "schemaVersion": 1,
-
   "notes": [
     "Read by bootstrap/get.ps1 so that 'irm <url> | iex' can resolve a version and a hash without arguments, which a bare pipe cannot supply.",
     "'latest' is what the one-liner installs when no version is given. It must name an entry in 'releases'.",
@@ -9,9 +8,7 @@
     "Recording the hash in git is the integrity story. Substituting a release asset would require also editing this file, which leaves a commit behind.",
     "'tagCommit' is the commit the release tag points at, which is verifiable independently. It is not a claim that the archive is reproducible from that tree."
   ],
-
-  "latest": "v0.1.0",
-
+  "latest": "v0.3.0",
   "releases": [
     {
       "version": "v0.1.0",
@@ -20,6 +17,14 @@
       "tagCommit": "d1d4871aed3abcbc83a7eedf23bbdd76e4d9b4cb",
       "published": "2026-08-10",
       "notes": "First tagged build. doctor only; configure is read-only and apply does not exist."
+    },
+    {
+      "version": "v0.3.0",
+      "asset": "TerminalStudio-v0.3.0.zip",
+      "sha256": "BD0313E42277A659EA03C36568A9F973019B90D030AE1B73D65017C5CCEBD6DE",
+      "tagCommit": "230a8f3557935df990a15d8fb238dc6ff067229b",
+      "published": "2026-08-22",
+      "notes": "uninstall, configure -Save, and the structured log."
     }
   ]
 }
