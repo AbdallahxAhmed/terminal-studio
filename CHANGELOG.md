@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A changelog exists from the first commit on purpose. Retrofitting one means reconstructing history
 from memory, and the reconstruction is always wrong.
 
+## [0.3.1] - 2026-08-22
+
+### Added
+
+- **Interactive Desktop Dashboard (`ts gui` / `Show-TSMainWindow`).** A Chris Titus WinUtil-style
+  multi-tab WPF interface for configuring tweaks, executing one-click backups and applies, running
+  doctor diagnostics, and inspecting change journals with live action console output.
+- **One-Liner Auto Launch.** Executing `bootstrap/get.ps1` via `irm | iex` automatically launches the
+  graphical dashboard on Windows.
+
 ## [0.3.0] - 2026-08-22
 
 Nothing sits above this section: everything not yet published is in it, and it carries no date
