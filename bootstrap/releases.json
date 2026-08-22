@@ -21,8 +21,8 @@
     {
       "version": "v0.3.0",
       "asset": "TerminalStudio-v0.3.0.zip",
-      "sha256": "BD0313E42277A659EA03C36568A9F973019B90D030AE1B73D65017C5CCEBD6DE",
-      "tagCommit": "230a8f3557935df990a15d8fb238dc6ff067229b",
+      "sha256": "C2559B791FD3B1A24E3B6DB54AE048B625955771F9CBE0EC9C6508A08A7F4D25",
+      "tagCommit": "77f31a2a7b3235a84c4a000c0682f2abdf178914",
       "published": "2026-08-22",
       "notes": "uninstall, configure -Save, and the structured log."
     }
