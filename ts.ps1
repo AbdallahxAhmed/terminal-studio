@@ -114,8 +114,8 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('doctor', 'plan', 'configure', 'apply', 'uninstall', 'version')]
-    [string] $Command = 'doctor',
+    [ValidateSet('gui', 'doctor', 'plan', 'configure', 'apply', 'uninstall', 'version')]
+    [string] $Command = 'gui',
 
     [switch] $Json,
 
@@ -172,6 +172,24 @@ $journalPath = Join-Path -Path $localAppData -ChildPath 'TerminalStudio\journal.
 $backupRoot = Join-Path -Path $localAppData -ChildPath 'TerminalStudio\backups'
 
 switch ($Command) {
+    'gui' {
+        if (-not $IsWindows) {
+            Write-Host 'The GUI dashboard requires Windows. Use "doctor" or "configure" in the terminal instead.'
+            exit 1
+        }
+
+        $apartment = [System.Threading.Thread]::CurrentThread.GetApartmentState()
+        if ($apartment -ne [System.Threading.ApartmentState]::STA) {
+            $pwsh = Get-Command -Name 'pwsh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            $pwshPath = if ($pwsh) { $pwsh.Path } else { 'pwsh.exe' }
+            & $pwshPath -STA -NoLogo -NoProfile -File $PSCommandPath gui
+            exit $LASTEXITCODE
+        }
+
+        Show-TSMainWindow @common
+        exit 0
+    }
+
     'version' {
         $module = Get-Module -Name 'TerminalStudio'
         Write-Output ("TerminalStudio {0}" -f $module.Version)

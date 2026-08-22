@@ -87,7 +87,8 @@ param(
     [string] $Sha256,
     [string] $InstallRoot,
     [switch] $SkipHashCheck,
-    [switch] $NoDoctor
+    [switch] $NoDoctor,
+    [switch] $NoGui
 )
 
 Set-StrictMode -Version Latest
@@ -100,7 +101,8 @@ function Invoke-TSStageZero {
         [string] $Sha256,
         [string] $InstallRoot,
         [switch] $SkipHashCheck,
-        [switch] $NoDoctor
+        [switch] $NoDoctor,
+        [switch] $NoGui
     )
 
     $owner = 'AbdallahxAhmed'
@@ -296,21 +298,30 @@ function Invoke-TSStageZero {
 
     if (-not $runDoctor) {
         Write-Host 'Next:'
-        Write-Host ('  pwsh -NoLogo -File "' + $entryScript + '" doctor')
+        Write-Host ('  pwsh -STA -File "' + $entryScript + '" gui')
         return
     }
 
-    Write-Host 'Running doctor. It reads; it changes nothing.'
-    Write-Host ''
+    $isWindowsPlatform = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+    if ($isWindowsPlatform -and -not $NoGui) {
+        Write-Host 'Launching Terminal Studio Dashboard...'
+        Write-Host ''
 
-    & $pwsh.Path -NoLogo -NoProfile -File $entryScript doctor
+        & $pwsh.Path -STA -NoLogo -NoProfile -File $entryScript gui
+    }
+    else {
+        Write-Host 'Running doctor. It reads; it changes nothing.'
+        Write-Host ''
+
+        & $pwsh.Path -NoLogo -NoProfile -File $entryScript doctor
+    }
 
     Write-Host ''
     Write-Host 'Run it again any time with:'
-    Write-Host ('  pwsh -NoLogo -File "' + $entryScript + '" doctor')
+    Write-Host ('  pwsh -STA -File "' + $entryScript + '" gui')
 }
 
 # Nothing above this line performs work; it only declares. Because the sole
 # invocation is the last statement in the file, a partial download cannot produce
 # a partial install.
-Invoke-TSStageZero -Version $Version -Sha256 $Sha256 -InstallRoot $InstallRoot -SkipHashCheck:$SkipHashCheck -NoDoctor:$NoDoctor
+Invoke-TSStageZero -Version $Version -Sha256 $Sha256 -InstallRoot $InstallRoot -SkipHashCheck:$SkipHashCheck -NoDoctor:$NoDoctor -NoGui:$NoGui
