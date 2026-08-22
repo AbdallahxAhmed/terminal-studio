@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Check out the tagged commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # The build script reads HEAD out of .git to stamp provenance into the
           # notes, so the checkout has to include it. It does by default; this is
