@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A changelog exists from the first commit on purpose. Retrofitting one means reconstructing history
 from memory, and the reconstruction is always wrong.
 
-## [0.3.0] - unreleased
+## [0.3.0] - 2026-08-22
 
 Nothing sits above this section: everything not yet published is in it, and it carries no date
 because it has not been tagged. The previous section carried a date it never earned — see below.
