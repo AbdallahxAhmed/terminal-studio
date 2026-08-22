@@ -135,7 +135,8 @@ function Invoke-TSStageZero {
     Write-Host 'Terminal Studio'
 
     try {
-        $manifestText = (Invoke-WebRequest -Uri $manifestUri -UseBasicParsing).Content
+        $cacheBuster = [Guid]::NewGuid().ToString('N')
+        $manifestText = (Invoke-WebRequest -Uri "$manifestUri`?v=$cacheBuster" -UseBasicParsing).Content
     }
     catch {
         throw "Could not read the release manifest at $manifestUri. $($_.Exception.Message)"
