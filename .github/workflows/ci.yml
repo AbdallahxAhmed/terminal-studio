@@ -43,7 +43,7 @@ jobs:
               exit 0
           }
 
-          $findings = Invoke-ScriptAnalyzer -Path $targets -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          $findings = @($targets | ForEach-Object {Invoke-ScriptAnalyzer -Path $_ -Recurse -Settings ./PSScriptAnalyzerSettings.psd1})
 
           if ($findings) {
               $findings |
