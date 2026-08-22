@@ -281,6 +281,10 @@ foreach ($assembly in @('System.IO.Compression', 'System.IO.Compression.FileSyst
 
 $staging = Join-Path -Path $env:TEMP -ChildPath ('ts-release-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -Path $staging -ItemType Directory -Force
+# Resolve the staging directory to its canonical long path, avoiding 8.3 short-name
+# differences in $env:TEMP (e.g. ABDALL~1 vs Abdallah_Ahmed) that would corrupt
+# relative path calculations.
+$staging = (Get-Item -LiteralPath $staging).FullName
 
 try {
     foreach ($item in $payload) {
@@ -353,6 +357,10 @@ try {
     try {
         foreach ($entry in $zip.Entries) {
             $entry.LastWriteTime = $entryStamp
+        }
+
+        if (-not $zip.GetEntry('ts.ps1')) {
+            throw "Archive assembly defect: ts.ps1 is not at the archive root of $archive. Entries found: $(($zip.Entries | Select-Object -First 5 -ExpandProperty FullName) -join ', ')"
         }
     }
     finally {
