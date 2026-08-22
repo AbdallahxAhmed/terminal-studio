@@ -29,10 +29,10 @@
     {
       "version": "v0.3.1",
       "asset": "TerminalStudio-v0.3.1.zip",
-      "sha256": "DD325FC5FE61B206DCB14F423AD3B574D3575C059C4B08ABD823EC611E45698E",
-      "tagCommit": "364ae652b142461b56288afb1a075bf3d736d33c",
+      "sha256": "71243A170BFB21CCCC9B1EDA1DF1AA2C89B0E1D682F2DAAECC472653156AA16A",
+      "tagCommit": "ce16327ddcf2b2c4599f7567050fd3bc87a7560d",
       "published": "2026-08-22",
-      "notes": "WPF interactive dashboard with non-blocking UI pump, uninstall, configure -Save, and the structured log."
+      "notes": "WPF interactive dashboard with instant theme sync and non-blocking UI pump."
     }
   ]
 }
