@@ -31,27 +31,45 @@ $uiFiles = @(Get-ChildItem -Path (Join-Path -Path $moduleRoot -ChildPath 'UI') -
 $nonUiFiles = @($publicFiles + $privateFiles + $adapterFiles)
 $logicFiles = @($publicFiles + $privateFiles)
 
-function Get-TSInvokedCommandName {
-    <#
-        Returns the names of commands actually invoked in a file. Comments, strings,
-        and documentation are not commands, which is the entire point.
-    #>
-    param(
-        [Parameter(Mandatory)]
-        [string] $Path
-    )
+BeforeAll {
+    # The same values again, for the other half of the lifecycle.
+    #
+    # The comment above is correct that -ForEach needs these during discovery. It
+    # is also not sufficient: discovery state is not the state test bodies execute
+    # in, so an It that called the helper below raised CommandNotFoundException and
+    # an It that read $uiFiles saw $null. Both phases need this, so both phases
+    # build it. Recomputing four directory listings is cheaper than either half of
+    # the suite silently not running.
+    $script:repoRoot = Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent
+    $script:moduleRoot = Join-Path -Path $script:repoRoot -ChildPath 'src/TerminalStudio'
 
-    $tokens = $null
-    $errors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref] $tokens, [ref] $errors)
+    $script:publicFiles = @(Get-ChildItem -Path (Join-Path -Path $script:moduleRoot -ChildPath 'Public') -Filter '*.ps1' -File)
+    $script:privateFiles = @(Get-ChildItem -Path (Join-Path -Path $script:moduleRoot -ChildPath 'Private') -Filter '*.ps1' -File)
+    $script:adapterFiles = @(Get-ChildItem -Path (Join-Path -Path $script:moduleRoot -ChildPath 'Adapters') -Filter '*.ps1' -File)
+    $script:uiFiles = @(Get-ChildItem -Path (Join-Path -Path $script:moduleRoot -ChildPath 'UI') -Filter '*.ps1' -File)
 
-    if (@($errors).Count -gt 0) {
-        throw "Parse errors in $Path"
+    function Get-TSInvokedCommandName {
+        <#
+            Returns the names of commands actually invoked in a file. Comments, strings,
+            and documentation are not commands, which is the entire point.
+        #>
+        param(
+            [Parameter(Mandatory)]
+            [string] $Path
+        )
+
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref] $tokens, [ref] $errors)
+
+        if (@($errors).Count -gt 0) {
+            throw "Parse errors in $Path"
+        }
+
+        $commands = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)
+
+        @($commands | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ })
     }
-
-    $commands = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)
-
-    @($commands | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ })
 }
 
 Describe 'every module file parses' {
@@ -81,7 +99,7 @@ Describe 'presentation is confined to the UI folder' {
 
     It 'the UI folder actually contains renderers' {
         # Guards against the rules above passing trivially because the folder is empty.
-        $uiFiles.Count | Should -BeGreaterThan 0
+        $script:uiFiles.Count | Should -BeGreaterThan 0
     }
 }
 
@@ -156,10 +174,10 @@ Describe 'the manifest and the Public folder agree' {
     It 'exports exactly the functions that exist in Public' {
         # Drift here is quiet and expensive: a file added without a manifest entry is
         # simply invisible to callers, and a manifest entry with no file breaks import.
-        $manifest = Import-PowerShellDataFile -Path (Join-Path -Path $moduleRoot -ChildPath 'TerminalStudio.psd1')
+        $manifest = Import-PowerShellDataFile -Path (Join-Path -Path $script:moduleRoot -ChildPath 'TerminalStudio.psd1')
 
         $declared = @($manifest.FunctionsToExport | Sort-Object)
-        $actual = @($publicFiles | ForEach-Object { $_.BaseName } | Sort-Object)
+        $actual = @($script:publicFiles | ForEach-Object { $_.BaseName } | Sort-Object)
 
         $declared | Should -Be $actual
     }
@@ -167,7 +185,7 @@ Describe 'the manifest and the Public folder agree' {
     It 'does not export a wildcard' {
         # FunctionsToExport = '*' costs real import time and turns the public surface
         # into an accident of file layout.
-        $manifest = Import-PowerShellDataFile -Path (Join-Path -Path $moduleRoot -ChildPath 'TerminalStudio.psd1')
+        $manifest = Import-PowerShellDataFile -Path (Join-Path -Path $script:moduleRoot -ChildPath 'TerminalStudio.psd1')
         @($manifest.FunctionsToExport) | Should -Not -Contain '*'
     }
 }

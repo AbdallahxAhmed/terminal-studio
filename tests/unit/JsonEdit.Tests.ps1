@@ -13,6 +13,12 @@
     Edit-TSJsonText and Compare-TSJsonDocument are private, so those cases run
     inside the module scope. They are pure string and object functions, so nothing
     in those blocks needs a filesystem.
+
+    Every JSON fixture here is a single-quoted string or a single-quoted
+    here-string. That is not a style choice. PowerShell has no backslash escape in
+    a double-quoted string, so "\"a\"" terminates at the first backslash-quote and
+    the rest of the line is parsed as code - which failed this entire file during
+    discovery once already.
 #>
 
 BeforeAll {
@@ -137,7 +143,17 @@ Describe 'Edit-TSJsonText' {
 
     It 'replaces one scalar and returns every other character unchanged' {
         InModuleScope 'TerminalStudio' {
-            $text = "{`n  // a comment a reparse would delete`n  \"profiles\": [`n    {`n        \"useAcrylic\": true,`n        \"opacity\": 85`n    }`n  ]`n}"
+            $text = @'
+{
+  // a comment a reparse would delete
+  "profiles": [
+    {
+        "useAcrylic": true,
+        "opacity": 85
+    }
+  ]
+}
+'@
 
             $edited = Edit-TSJsonText -Text $text -Path 'profiles.0.opacity' -Value 70
 
