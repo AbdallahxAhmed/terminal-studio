@@ -265,7 +265,13 @@ function Invoke-TSUninstall {
             $sourceHash = Get-TSFileHashValue -Path $source
 
             if ($sourceHash -ne $previous.ToUpperInvariant()) {
-                $results.Add((New-TSResult -Name "Undo: $label" -Status 'Fail' -Expected "backup sha256 $($previous.ToUpperInvariant())" -Actual "backup sha256 $sourceHash" -Remediation "Refusing to restore $source over $destination: it is not the file apply displaced. Compare them by hand before copying either way."))
+                # ${destination}, not $destination, because the colon that follows
+                # it is how PowerShell writes a scope qualifier - $env:PATH - so
+                # the parser reads the name as unterminated and the file does not
+                # compile. One unparseable file fails the whole module import, so
+                # this typo took every command in the tool down with it. Any
+                # interpolated variable immediately followed by ':' needs braces.
+                $results.Add((New-TSResult -Name "Undo: $label" -Status 'Fail' -Expected "backup sha256 $($previous.ToUpperInvariant())" -Actual "backup sha256 $sourceHash" -Remediation "Refusing to restore $source over ${destination}: it is not the file apply displaced. Compare them by hand before copying either way."))
                 continue
             }
 
