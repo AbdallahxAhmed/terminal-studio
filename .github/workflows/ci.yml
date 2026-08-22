@@ -1,20 +1,3 @@
-# ---------------------------------------------------------------------------
-# STAGED WORKFLOW - NOT YET ACTIVE
-#
-# This file is the project's CI definition. It is parked here instead of at
-# .github/workflows/ci.yml because the integration used to create this
-# repository was not granted the "Workflows" permission, which GitHub requires
-# for any write under .github/workflows/.
-#
-# To activate (one command, then push):
-#
-#     git mv .github/ci.yml .github/workflows/ci.yml
-#     git commit -m "ci: activate workflow"
-#     git push
-#
-# The content below is final and needs no edits.
-# ---------------------------------------------------------------------------
-
 name: ci
 
 on:
@@ -34,23 +17,25 @@ jobs:
   lint:
     name: lint (PSScriptAnalyzer)
     runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
 
       - name: Install PSScriptAnalyzer
-        shell: pwsh
         run: |
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
           Install-Module PSScriptAnalyzer -MinimumVersion 1.22.0 -Force -Scope CurrentUser
 
       - name: Analyze
-        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
           # Scoped to shipping code. Test files are validated by being executed,
           # and Pester's $script: scoping trips analyzer rules that do not apply.
-          $targets = @('./src', './bootstrap', './ts.ps1') |
+          $targets = @('./src', './bootstrap', './tools', './ts.ps1') |
               Where-Object { Test-Path -LiteralPath $_ }
 
           if (-not $targets) {
@@ -74,6 +59,7 @@ jobs:
   test:
     name: test (${{ matrix.label }})
     runs-on: windows-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -85,22 +71,38 @@ jobs:
             shell: powershell
           - label: PowerShell 7
             shell: pwsh
+    # Declared here rather than on each step, and that is a requirement rather
+    # than a tidy-up. The matrix context is not available to
+    # jobs.<id>.steps[*].shell, so putting the expression on a step is a workflow
+    # parse error - Unrecognized named-value: 'matrix' - which fails both legs
+    # before any PowerShell executes. jobs.<id>.defaults.run does see the matrix
+    # and applies to every run step in the job.
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Report engine
-        shell: ${{ matrix.shell }}
         run: $PSVersionTable | Format-List | Out-String | Write-Host
 
       - name: Install Pester
-        shell: ${{ matrix.shell }}
         run: |
           $ErrorActionPreference = 'Stop'
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+
+          # Windows PowerShell 5.1 ships PowerShellGet 1.0.0.1, which asks for the
+          # NuGet provider interactively the first time it installs anything. There
+          # is nobody on a runner to answer that prompt, so the leg would fail for a
+          # reason that has nothing to do with Pester or with this project.
+          if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
+          }
+
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck -AllowClobber
 
       - name: Run tests
-        shell: ${{ matrix.shell }}
         run: ./tests/Invoke-Tests.ps1
 
       - name: Upload test results

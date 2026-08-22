@@ -1,31 +1,3 @@
-# STAGED, NOT ACTIVE.
-#
-# This file has to live at .github/workflows/release.yml to run. It is parked here
-# because the token that wrote it cannot create or modify files under
-# .github/workflows/ - GitHub requires an explicit workflow scope for that, which
-# is the correct behaviour: a token able to add a workflow is a token able to run
-# arbitrary code with the repository's secrets.
-#
-# Activate it with one command, from a checkout:
-#
-#     git mv -f .github/release.yml .github/workflows/release.yml
-#     git commit -m "Activate the release workflow"
-#     git push
-#
-# What it does, and why each piece is here:
-#
-#   - Runs the test suite before building. A tagged release that was never tested
-#     is the tag people trust most and deserve least.
-#   - Builds with tools/New-TSRelease.ps1, the same script a human runs, so the
-#     artifact is not the product of a second build recipe that can drift.
-#   - Attests build provenance. This is what makes 'signed releases' real: the
-#     attestation ties the archive to this repository, this workflow file, and this
-#     commit, and gh attestation verify checks it without anyone holding a key.
-#   - Does NOT update bootstrap/releases.json. That entry is recorded afterwards by
-#     -UpdateManifest, which downloads the published asset and refuses to write
-#     unless the bytes match. Automating it inside the same run would remove the
-#     one check that makes the recorded hash worth reading.
-
 name: release
 
 on:
