@@ -14,6 +14,7 @@ desired-state/local.*.json
 
 # Downloaded artifacts during bootstrap testing
 .artifacts/
+artifacts/
 *.zip
 
 # Editor and OS noise
