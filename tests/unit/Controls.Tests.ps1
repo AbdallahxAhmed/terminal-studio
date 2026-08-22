@@ -11,7 +11,11 @@
     against the documents themselves.
 
     File lists and control lists are built at top level because Pester 5 expands
-    -ForEach during discovery, before any BeforeAll has run.
+    -ForEach during discovery, before any BeforeAll has run. They are then built
+    again in BeforeAll, because discovery state is not the state test bodies
+    execute in - a distinction this file previously got wrong in both directions
+    at once: every It read $null, and the nested BeforeAll imported the module
+    from an empty path.
 #>
 
 $repoRoot = Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent
@@ -116,18 +120,114 @@ $controls = @(
 
 $canImportModule = $PSVersionTable.PSVersion.Major -ge 7
 
+BeforeAll {
+    # The same values again, for the phase that executes test bodies. The
+    # functions are redefined here for the same reason: a function declared at the
+    # top of the file exists during discovery and is gone by the time an It calls
+    # it.
+    $script:repoRoot = Split-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -Parent
+    $script:modulePath = Join-Path -Path $script:repoRoot -ChildPath 'src\TerminalStudio\TerminalStudio.psd1'
+
+    $script:definition = Get-Content -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath 'src\TerminalStudio\Data\controls.json') -Raw -Encoding utf8 | ConvertFrom-Json
+    $script:machine = Get-Content -LiteralPath (Join-Path -Path $script:repoRoot -ChildPath 'desired-state\machine.json') -Raw -Encoding utf8 | ConvertFrom-Json
+
+    $script:machineKinds = @($script:machine.resources | ForEach-Object { [string] $_.kind } | Sort-Object -Unique)
+    $script:renderableTypes = @('checkbox', 'dropdown')
+
+    function Get-TSTestSourceDocument {
+        param(
+            [object] $Machine,
+            [string] $RepoRoot,
+            [string] $Kind
+        )
+
+        $resource = @($Machine.resources | Where-Object { [string] $_.kind -eq $Kind }) | Select-Object -First 1
+
+        if ($null -eq $resource) {
+            return $null
+        }
+
+        $names = @($resource.PSObject.Properties.Name)
+
+        if ($names -notcontains 'source') {
+            return $null
+        }
+
+        $path = Join-Path -Path $RepoRoot -ChildPath ([string] $resource.source)
+
+        if (-not (Test-Path -LiteralPath $path)) {
+            return $null
+        }
+
+        Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+    }
+
+    function Test-TSTestJsonPath {
+        param(
+            [object] $Document,
+            [string] $Path
+        )
+
+        $current = $Document
+
+        foreach ($segment in ($Path -split '\.')) {
+            if ($null -eq $current) {
+                return $false
+            }
+
+            if ($segment -match '^\d+$') {
+                $items = @($current)
+
+                if ([int] $segment -ge $items.Count) {
+                    return $false
+                }
+
+                $current = $items[[int] $segment]
+                continue
+            }
+
+            $names = @($current.PSObject.Properties.Name)
+
+            if ($names -notcontains $segment) {
+                return $false
+            }
+
+            $current = $current.$segment
+        }
+
+        $true
+    }
+
+    $script:sourceDocuments = @{
+        fragment = Get-TSTestSourceDocument -Machine $script:machine -RepoRoot $script:repoRoot -Kind 'terminal.fragment'
+        omp      = Get-TSTestSourceDocument -Machine $script:machine -RepoRoot $script:repoRoot -Kind 'omp.theme'
+    }
+
+    $script:controls = @(
+        foreach ($group in @($script:definition.groups)) {
+            foreach ($control in @($group.controls)) {
+                [pscustomobject] @{
+                    Name    = "$($group.id)/$($control.id)"
+                    Id      = [string] $control.id
+                    Control = $control
+                }
+            }
+        }
+    )
+}
+
 Describe 'Control definition' {
 
     It 'declares a schema version this build understands' {
-        $definition.schemaVersion | Should -Be 1
+        $script:definition.schemaVersion | Should -Be 1
     }
 
     It 'defines at least one group' {
-        @($definition.groups).Count | Should -BeGreaterThan 0
+        @($script:definition.groups).Count | Should -BeGreaterThan 0
     }
 
     It 'gives every control a unique id' {
-        $ids = @($controls | ForEach-Object { $_.Id })
+        $ids = @($script:controls | ForEach-Object { $_.Id })
         $unique = @($ids | Sort-Object -Unique)
 
         # Duplicate ids would make the two surfaces disagree about which control
@@ -138,8 +238,8 @@ Describe 'Control definition' {
     It 'resolves both indirect source documents' {
         # If these are null the appearance and prompt controls are all unbound,
         # which would otherwise show up only as a form full of disabled rows.
-        $sourceDocuments['fragment'] | Should -Not -BeNullOrEmpty
-        $sourceDocuments['omp'] | Should -Not -BeNullOrEmpty
+        $script:sourceDocuments['fragment'] | Should -Not -BeNullOrEmpty
+        $script:sourceDocuments['omp'] | Should -Not -BeNullOrEmpty
     }
 }
 
@@ -152,7 +252,7 @@ Describe 'Control <_.Name>' -ForEach $controls {
     }
 
     It 'has a type both surfaces can render' {
-        $renderableTypes | Should -Contain ([string] $_.Control.type)
+        $script:renderableTypes | Should -Contain ([string] $_.Control.type)
     }
 
     It 'offers real options when it is a dropdown' {
@@ -181,11 +281,11 @@ Describe 'Control <_.Name>' -ForEach $controls {
             # A control may legitimately point at an absent resource - that is
             # what an unchecked presence checkbox means. What it may never do is
             # name a resource kind desired state has never heard of.
-            $machineKinds | Should -Contain ([string] $target.kind)
+            $script:machineKinds | Should -Contain ([string] $target.kind)
             return
         }
 
-        $document = $sourceDocuments[$source]
+        $document = $script:sourceDocuments[$source]
         $document | Should -Not -BeNullOrEmpty
 
         $mode = 'value'
@@ -208,7 +308,7 @@ Describe 'Control <_.Name>' -ForEach $controls {
 Describe 'Get-TSControl' -Skip:(-not $canImportModule) {
 
     BeforeAll {
-        Import-Module -Name $modulePath -Force -ErrorAction Stop
+        Import-Module -Name $script:modulePath -Force -ErrorAction Stop
     }
 
     AfterAll {
@@ -216,7 +316,7 @@ Describe 'Get-TSControl' -Skip:(-not $canImportModule) {
     }
 
     It 'returns one object per defined control' {
-        @(Get-TSControl).Count | Should -Be $controls.Count
+        @(Get-TSControl).Count | Should -Be $script:controls.Count
     }
 
     It 'binds every control in this repository' {
