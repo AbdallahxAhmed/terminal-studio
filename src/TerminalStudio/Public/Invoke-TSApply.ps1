@@ -172,10 +172,27 @@ function Invoke-TSApply {
                     break
                 }
 
-                $source = Join-Path -Path $PayloadRoot -ChildPath $resource.source
+                $namedRelative = "desired-state/fragments/$($resource.name).json"
+                $relativeSource = if (Test-Path -LiteralPath (Join-Path -Path $PayloadRoot -ChildPath $namedRelative)) {
+                    $namedRelative
+                }
+                else {
+                    [string] $resource.source
+                }
+
+                $source = Join-Path -Path $PayloadRoot -ChildPath $relativeSource
                 $destination = Get-TSTerminalFragmentPath -AppName $resource.appName -FragmentName $resource.name
 
                 $results.Add((Sync-TSManagedFile -Name "Fragment: $($resource.name)" -Kind $kind -Source $source -Destination $destination @shared))
+
+                # Clean up sibling fragments in the same folder to prevent multi-fragment collision on the same profile GUID
+                $fragmentDir = Split-Path -Path $destination -Parent
+                if (Test-Path -LiteralPath $fragmentDir) {
+                    $siblings = @(Get-ChildItem -LiteralPath $fragmentDir -Filter '*.json' | Where-Object { $_.Name -ne "$($resource.name).json" })
+                    foreach ($sib in $siblings) {
+                        Remove-Item -LiteralPath $sib.FullName -Force -ErrorAction SilentlyContinue
+                    }
+                }
 
                 # Asked here, not left to the next doctor run. A fragment can be
                 # deployed perfectly and still change nothing on screen, and the

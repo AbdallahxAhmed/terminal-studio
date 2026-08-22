@@ -35,7 +35,9 @@
         "weight": "semi-bold"
       },
       "opacity": 75,
-      "useAcrylic": true
+      "useAcrylic": true,
+      "backgroundImage": null,
+      "padding": "8, 8, 8, 8"
     }
   ]
 }
