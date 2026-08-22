@@ -166,10 +166,12 @@ function Show-TSMainWindow {
 
     $consoleDock = New-Object System.Windows.Controls.DockPanel
 
+    $consoleHeaderBorder = New-Object System.Windows.Controls.Border
+    $consoleHeaderBorder.Background = $bgCardAlt
+    $consoleHeaderBorder.Padding = New-Object System.Windows.Thickness 8, 4, 8, 4
+    [System.Windows.Controls.DockPanel]::SetDock($consoleHeaderBorder, [System.Windows.Controls.Dock]::Top)
+
     $consoleHeader = New-Object System.Windows.Controls.DockPanel
-    $consoleHeader.Background = $bgCardAlt
-    $consoleHeader.Padding = New-Object System.Windows.Thickness 8, 4, 8, 4
-    [System.Windows.Controls.DockPanel]::SetDock($consoleHeader, [System.Windows.Controls.Dock]::Top)
 
     $consoleTitle = New-Object System.Windows.Controls.TextBlock
     $consoleTitle.Text = '⚡ Action Output Console'
@@ -185,7 +187,8 @@ function Show-TSMainWindow {
     $clearBtn.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
     $null = $consoleHeader.Children.Add($clearBtn)
 
-    $null = $consoleDock.Children.Add($consoleHeader)
+    $consoleHeaderBorder.Child = $consoleHeader
+    $null = $consoleDock.Children.Add($consoleHeaderBorder)
 
     $consoleScroll = New-Object System.Windows.Controls.ScrollViewer
     $consoleScroll.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
